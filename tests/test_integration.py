@@ -40,7 +40,9 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
         pytest.skip("policy-server did not start in time")
     yield
     # tear down
-    subprocess.call(["docker-compose", "-f", "docker-compose.integration.yml", "down"])
+    subprocess.call(
+        ["docker", "compose", "-f", "docker-compose.integration.yml", "down"]
+    )
 
 
 @pytest.mark.parametrize(
