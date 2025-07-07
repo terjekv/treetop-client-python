@@ -8,8 +8,9 @@ services:
     command: ["/data", "--port", "8999"]
 
   integration-test-treetop-server:
-    image: treetop-server:latest
-    pull_policy: never
+    image: terjekv/treetop-rest:develop
+    container_name: integration-test-treetop-server
+    pull_policy: "always"
     ports:
       - "10101:9999"
     environment:
