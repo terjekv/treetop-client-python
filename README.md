@@ -20,6 +20,9 @@ req = Request(
 resp = client.check(req)
 assert resp.is_allowed() 
 assert resp.decision == "Allow"
+
+# The other possible value for decision is "Deny" which makes `is_denied()` True
+# (and `is_allowed()` False).
 ```
 
 You can also use the `check_detailed` method to get more information about the decision:
@@ -39,8 +42,10 @@ req = Request(
 resp = client.check_detailed(req)
 assert resp.is_allowed()
 assert resp.decision == "Allow"
-assert resp.policy_literal() is not None # This will contain the policy that was matched, in cedar format
-assert resp.policy_json() is not None # This will contain the policy that was matched, in JSON format
+ # This will contain the policy that was matched, in cedar format
+assert resp.policy_literal() is not None
+ # This will contain the policy that was matched, in JSON format
+assert resp.policy_json() is not None
 ```
 
 Note that for `User` the namespace and groups are optional, and for `Action` the namespace is optional. If you don't provide a namespace, it will default to the root namespace.
