@@ -1,0 +1,25 @@
+services:
+  integration-test-cedar-server:
+    image: svenstaro/miniserve
+    ports:
+      - "8999:8999"            # host 8080 → container 8080
+    volumes:
+      - ./testdata:/data:ro    # your ./testdata/test.cedar lives here
+    command: ["/data", "--port", "8999"]
+
+  integration-test-treetop-server:
+    image: treetop-server:latest
+    pull_policy: never
+    ports:
+      - "10101:9999"
+    environment:
+      - APP_HOST=0.0.0.0
+      - APP_PORT=9999
+      - APP_POLICY_URL=http://integration-test-cedar-server:8999/dns.cedar
+      - APP_HOST_LABELS_URL=http://integration-test-cedar-server:8999/hostlabels.json
+      - APP_POLICY_UPDATE_FREQUENCY=2
+      - APP_HOST_LABELS_UPDATE_FREQUENCY=2
+      - RUST_LOG="hyper_util=warn,reqwest=warn,debug"
+    depends_on:
+      - integration-test-cedar-server
+    command: ["server"]

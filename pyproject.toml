@@ -1,0 +1,23 @@
+[project]
+name = "treetop-client"
+version = "0.0.1"
+description = "Python client library for the Treetop policy server"
+authors = [{ name = "Terje Kvernes", email = "terje@kvernes.no" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["httpx (>=0.28.1,<0.29.0)"]
+
+[tool.poetry]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.1"
+pytest-httpx = "^0.35.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+markers = ["integration: run tests against a live policy-server (Docker)"]
+addopts = "-m 'not integration'"
