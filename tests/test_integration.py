@@ -21,7 +21,7 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
     """
     # bring up
     subprocess.check_call(
-        ["docker-compose", "-f", "docker-compose.integration.yml", "up", "-d"]
+        ["docker", "compose", "-f", "docker-compose.integration.yml", "up", "-d"]
     )
     # wait for the server to be ready
     for _ in range(10):
