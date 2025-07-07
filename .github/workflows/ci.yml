@@ -27,12 +27,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install poetry
           poetry install
-
+          
       - name: Run pytest
         run: |
           if [ "${{ matrix.integration }}" = "true" ]; then
-            pytest -m integration
+            poetry run pytest -m integration
           else
-            pytest
+            poetry run pytest
           fi
 
