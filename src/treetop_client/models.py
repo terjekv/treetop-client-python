@@ -22,7 +22,7 @@ class Endpoint(enum.Enum):
 @dataclass(slots=True, frozen=True)
 class QualifiedId:
     id: str
-    namespace: list[str] = field(default_factory=list)
+    namespace: list[str] = field(default_factory=list[str])
 
     def __post_init__(self):
         _no_colon(self.id, field_name="QualifiedId.id")
@@ -70,7 +70,7 @@ class Action:
 @dataclass(slots=True, frozen=True)
 class User:
     id: QualifiedId
-    groups: list[Group] = field(default_factory=list)
+    groups: list[Group] = field(default_factory=list[Group])
 
     def to_api(self) -> dict[str, Any]:
         return {

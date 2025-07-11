@@ -21,3 +21,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 markers = ["integration: run tests against a live policy-server (Docker)"]
 addopts = "-m 'not integration'"
+
+[project.urls]
+Homepage = "https://github.com/terjekv/treetop-client-python"
+Issues = "https://github.com/terjekv/treetop-client-python/issues"
