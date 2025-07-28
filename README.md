@@ -50,6 +50,26 @@ assert resp.policy_json() is not None
 
 Note that for `User` the namespace and groups are optional, and for `Action` the namespace is optional. If you don't provide a namespace, it will default to the root namespace.
 
+## Correlation ID
+
+You can pass a correlation ID to the `check` and `check_detailed` methods. This ID will be included in the request headers and can be used on the server side
+to trace requests across queries or services. The value is a string of the client's choosing.
+
+```python
+from treetop_client.client import TreeTopClient
+from treetop_client.models import Action, Request, Resource, User
+
+client = TreeTopClient(base_url=f"http://localhost:{PORT}")
+
+req = Request(
+    principal=User.new("myuser", "mynamespace", ["mygroup"]),
+    action=Action.new("myaction", ["mynamespace"]),
+    resource=Resource.new("Host", {"name": "myhost.example.com", "ip": "10.0.0.1"}),
+)
+
+resp = client.check(req, correlation_id="my-correlation-id")
+```
+
 ## Integration tests
 
 Make sure you have Docker & Docker Compose installed.  
