@@ -3,7 +3,14 @@ import pytest
 from pytest_httpx import HTTPXMock
 
 from treetop_client.client import TreeTopClient
-from treetop_client.models import Action, QualifiedId, Request, Resource, User
+from treetop_client.models import (
+    Action,
+    QualifiedId,
+    Request,
+    Resource,
+    ResourceAttribute,
+    User,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +25,13 @@ def make_req():
     return Request(
         principal=User(id=QualifiedId(id="alice"), groups=[]),
         action=Action(id=QualifiedId(id="view")),
-        resource=Resource(kind="Photo", attrs={"id": "42"}),
+        resource=Resource(
+            kind="Photo",
+            id="42",
+            attrs={
+                "id": ResourceAttribute.new("42"),
+            },
+        ),
     )
 
 

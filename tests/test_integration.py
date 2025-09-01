@@ -5,7 +5,14 @@ import httpx
 import pytest
 
 from treetop_client.client import TreeTopClient
-from treetop_client.models import Action, Request, Resource, User
+from treetop_client.models import (
+    Action,
+    Request,
+    Resource,
+    ResourceAttribute,
+    ResourceAttributeType,
+    User,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -29,7 +36,6 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
             resp = httpx.get(f"http://localhost:{PORT}/api/v1/status", timeout=1.0)
             if resp.status_code == 200:
                 size = resp.json().get("policies").get("size")
-                print(f"policy size: {size}")
                 if size != 0:
                     break
                 else:
@@ -99,7 +105,12 @@ def test_live_check_allows_user(
         principal=User.new(principal, NAMESPACE, groups),
         action=Action.new(action, NAMESPACE),
         resource=Resource.new(
-            kind="Host", attrs={"name": "host.example.com", "ip": "10.0.0.1"}
+            kind="Host",
+            id="host.example.com",
+            attrs={
+                "name": ResourceAttribute.new("host.example.com"),
+                "ip": ResourceAttribute.new("10.0.0.1", type=ResourceAttributeType.IP),
+            },
         ),
     )
     resp = client.check(req)
@@ -107,21 +118,28 @@ def test_live_check_allows_user(
 
 
 @pytest.mark.parametrize(
-    "resource_kind, attrs",
+    "resource_kind, id, attrs",
     [
-        ("Generic", {"kind": "Any", "id": "12345"}),
-        ("Host", {"name": "host.example.com", "ip": "10.0.0.1"}),
+        ("Generic", "12345", {"kind": ResourceAttribute.new("Any")}),
+        (
+            "Host",
+            "host.example.com",
+            {
+                "name": ResourceAttribute.new("host.example.com"),
+                "ip": ResourceAttribute.new("10.0.0.1", type=ResourceAttributeType.IP),
+            },
+        ),
     ],
 )
 def test_live_check_allows_super_bare(
-    resource_kind: str, attrs: dict[str, str], docker_compose_up_down: None
+    resource_kind: str, id: str, attrs: dict[str, str], docker_compose_up_down: None
 ):
     client = TreeTopClient(base_url=f"http://localhost:{PORT}")
 
     req = Request(
         principal=User.new("super"),
         action=Action.new("any"),
-        resource=Resource.new(resource_kind, attrs),
+        resource=Resource.new(resource_kind, id, attrs),
     )
     resp = client.check(req)
     assert resp.decision == "Allow"
@@ -136,7 +154,12 @@ def test_live_check_allow_detailed(
         principal=User.new("alice", NAMESPACE, ["admins"]),
         action=Action.new("view_host", NAMESPACE),
         resource=Resource.new(
-            kind="Host", attrs={"name": "host.example.com", "ip": "10.0.0.1"}
+            kind="Host",
+            id="host.example.com",
+            attrs={
+                "name": ResourceAttribute.new("host.example.com"),
+                "ip": ResourceAttribute.new("10.0.0.1", type=ResourceAttributeType.IP),
+            },
         ),
     )
     resp = client.check_detailed(req)

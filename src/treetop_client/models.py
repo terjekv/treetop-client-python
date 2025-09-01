@@ -10,7 +10,7 @@ _COLON = re.compile(r":")
 
 def _no_colon(value: str, *, field_name: str) -> str:
     if _COLON.search(value):
-        raise ValueError(f"{field_name} may not contain ':' – got {value!r}")
+        raise ValueError(f"{field_name} may not contain ':' - got {value!r}")
     return value
 
 
@@ -55,7 +55,7 @@ class Action:
     id: QualifiedId
 
     def to_api(self) -> dict[str, Any]:
-        return {"id": self.id.to_api()}
+        return self.id.to_api()
 
     @classmethod
     def new(
@@ -74,10 +74,8 @@ class User:
 
     def to_api(self) -> dict[str, Any]:
         return {
-            "User": {
-                "id": self.id.to_api(),
-                "groups": [g.to_api() for g in self.groups],
-            }
+            **self.id.to_api(),
+            "groups": [g.to_api() for g in self.groups],
         }
 
     @classmethod
@@ -109,10 +107,37 @@ class User:
 Principal = User | Group
 
 
+class ResourceAttributeType(str, enum.Enum):
+    STRING = "String"
+    NUMBER = "Long"
+    BOOLEAN = "Boolean"
+    IP = "Ip"
+
+
+@dataclass(slots=True, frozen=True)
+class ResourceAttribute:
+    type: ResourceAttributeType
+    value: str
+
+    def to_api(self) -> dict[str, Any]:
+        return {"type": self.type.value, "value": self.value}
+
+    @classmethod
+    def new(
+        cls, value: str, type: ResourceAttributeType | None = None
+    ) -> ResourceAttribute:
+        """Create a new ResourceAttribute."""
+        if type is None:
+            type = ResourceAttributeType.STRING
+
+        return cls(type=type, value=value)
+
+
 @dataclass(slots=True, frozen=True)
 class Resource:
     kind: str
-    attrs: dict[str, Any]
+    id: str
+    attrs: dict[str, ResourceAttribute]
 
     def __post_init__(self):
         _no_colon(self.kind, field_name="Resource.kind")
@@ -120,12 +145,16 @@ class Resource:
             raise ValueError("Resource.attrs cannot be empty")
 
     def to_api(self) -> dict[str, Any]:
-        return {self.kind: self.attrs}
+        return {
+            "kind": self.kind,
+            "id": self.id,
+            "attrs": {k: v.to_api() for k, v in self.attrs.items()},
+        }
 
     @classmethod
-    def new(cls, kind: str, attrs: dict[str, Any]) -> Resource:
+    def new(cls, kind: str, id: str, attrs: dict[str, Any]) -> Resource:
         """Create a new Resource with kind and attributes."""
-        return cls(kind=kind, attrs=attrs)
+        return cls(kind=kind, id=id, attrs=attrs)
 
 
 @dataclass(slots=True, frozen=True)
@@ -135,8 +164,19 @@ class Request:
     resource: Resource
 
     def to_api(self) -> dict[str, Any]:
+        # Principal: User already returns {"User": {...}}.
+        # Group should be wrapped as {"Group": {...}} here.
+        if isinstance(self.principal, User):
+            principal_payload = {"User": self.principal.to_api()}
+        elif isinstance(self.principal, Group):  # type: ignore[unreachable]
+            principal_payload = {"Group": self.principal.to_api()}
+        else:
+            raise TypeError(
+                f"Unsupported principal type: {type(self.principal).__name__}"
+            )
+
         return {
-            "principal": self.principal.to_api(),
+            "principal": principal_payload,
             "action": self.action.to_api(),
             "resource": self.resource.to_api(),
         }
