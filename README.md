@@ -7,15 +7,18 @@ Python ≥ 3.11, zero runtime deps beyond HTTPX.
 
 ```python
 from treetop_client.client import TreeTopClient
-from treetop_client.models import Action, Request, Resource, User
+from treetop_client.models import Action, Request, Resource, User, ResourceAttribute, ResourceAttributeType
 
 
 client = TreeTopClient(base_url=f"http://localhost:{PORT}")
 
+attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
+attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
+
 req = Request(
     principal=User.new("myuser", "mynamespace", ["mygroup"]),
     action=Action.new("myaction", ["mynamespace"]),
-    resource=Resource.new("Host", {"name": "myhost.example.com", "ip": "10.0.0.1"}),
+    resource=Resource.new("Host", id="myhost", attrs=attrs)
 )
 resp = client.check(req)
 assert resp.is_allowed() 
@@ -29,14 +32,17 @@ You can also use the `check_detailed` method to get more information about the d
 
 ```python
 from treetop_client.client import TreeTopClient
-from treetop_client.models import Action, Request, Resource, User
+from treetop_client.models import Action, Request, Resource, User, ResourceAttribute, ResourceAttributeType
 
 client = TreeTopClient(base_url=f"http://localhost:{PORT}")
+
+attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
+attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
 
 req = Request(
     principal=User.new("myuser", "mynamespace", ["mygroup"]),
     action=Action.new("myaction", ["mynamespace"]),
-    resource=Resource.new("Host", {"name": "myhost.example.com", "ip": "10.0.0.1"}),
+    resource=Resource.new("Host", id="myhost", attrs=attrs)
 )
 
 resp = client.check_detailed(req)
@@ -61,10 +67,13 @@ from treetop_client.models import Action, Request, Resource, User
 
 client = TreeTopClient(base_url=f"http://localhost:{PORT}")
 
+attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
+attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
+
 req = Request(
     principal=User.new("myuser", "mynamespace", ["mygroup"]),
     action=Action.new("myaction", ["mynamespace"]),
-    resource=Resource.new("Host", {"name": "myhost.example.com", "ip": "10.0.0.1"}),
+    resource=Resource.new("Host", id="myhost", attrs=attrs)
 )
 
 resp = client.check(req, correlation_id="my-correlation-id")

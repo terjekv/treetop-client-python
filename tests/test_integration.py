@@ -132,7 +132,10 @@ def test_live_check_allows_user(
     ],
 )
 def test_live_check_allows_super_bare(
-    resource_kind: str, id: str, attrs: dict[str, str], docker_compose_up_down: None
+    resource_kind: str,
+    id: str,
+    attrs: dict[str, ResourceAttribute],
+    docker_compose_up_down: None,
 ):
     client = TreeTopClient(base_url=f"http://localhost:{PORT}")
 

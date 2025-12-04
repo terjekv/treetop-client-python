@@ -32,6 +32,11 @@ class QualifiedId:
     def to_api(self) -> dict[str, Any]:
         return {"id": self.id, "namespace": self.namespace}
 
+    def __str__(self) -> str:
+        if self.namespace:
+            return f"{'::'.join(self.namespace)}::{self.id}"
+        return self.id
+
 
 @dataclass(slots=True, frozen=True)
 class Group:
@@ -49,6 +54,9 @@ class Group:
         """Create a new Group with a QualifiedId."""
         return Group(id=QualifiedId(id=id, namespace=namespace or []))
 
+    def __str__(self) -> str:
+        return str(self.id)
+
 
 @dataclass(slots=True, frozen=True)
 class Action:
@@ -65,6 +73,9 @@ class Action:
     ) -> Action:
         """Create a new Action."""
         return Action(id=QualifiedId(id=id, namespace=namespace or []))
+
+    def __str__(self) -> str:
+        return str(self.id)
 
 
 @dataclass(slots=True, frozen=True)
@@ -103,6 +114,9 @@ class User:
             groups=[Group.new(id=g, namespace=namespace or []) for g in groups or []],
         )
 
+    def __str__(self) -> str:
+        return str(self.id)
+
 
 Principal = User | Group
 
@@ -120,6 +134,15 @@ class ResourceAttribute:
     value: str
 
     def to_api(self) -> dict[str, Any]:
+        if self.type == ResourceAttributeType.BOOLEAN:
+            # Convert "true"/"false" strings to actual booleans for the API
+            val = self.value.lower() == "true"
+            return {"type": self.type.value, "value": val}
+        elif self.type == ResourceAttributeType.NUMBER:
+            # Convert numeric strings to actual floats for the API
+            val = float(self.value)
+            return {"type": self.type.value, "value": val}
+
         return {"type": self.type.value, "value": self.value}
 
     @classmethod
@@ -152,7 +175,7 @@ class Resource:
         }
 
     @classmethod
-    def new(cls, kind: str, id: str, attrs: dict[str, Any]) -> Resource:
+    def new(cls, kind: str, id: str, attrs: dict[str, ResourceAttribute]) -> Resource:
         """Create a new Resource with kind and attributes."""
         return cls(kind=kind, id=id, attrs=attrs)
 
