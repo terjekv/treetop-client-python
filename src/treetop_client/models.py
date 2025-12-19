@@ -3,7 +3,8 @@ from __future__ import annotations
 import enum
 import re
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from datetime import datetime
+from typing import Any, ClassVar, cast
 
 _COLON = re.compile(r":")
 
@@ -19,10 +20,15 @@ class Endpoint(enum.Enum):
     CHECK_DETAILED = "/api/v1/check_detailed"
 
 
+class Decision(str, enum.Enum):
+    ALLOW = "Allow"
+    DENY = "Deny"
+
+
 @dataclass(slots=True, frozen=True)
 class QualifiedId:
     id: str
-    namespace: list[str] = field(default_factory=list[str])
+    namespace: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         _no_colon(self.id, field_name="QualifiedId.id")
@@ -81,7 +87,7 @@ class Action:
 @dataclass(slots=True, frozen=True)
 class User:
     id: QualifiedId
-    groups: list[Group] = field(default_factory=list[Group])
+    groups: list[Group] = field(default_factory=list)
 
     def to_api(self) -> dict[str, Any]:
         return {
@@ -211,20 +217,20 @@ def as_api(obj: Request | dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(slots=True, frozen=True)
 class CheckResponseBrief:
-    decision: str  # "Allow" or "Deny"
+    decision: Decision
 
     _KEYS: ClassVar[tuple[str, ...]] = ("decision",)
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> CheckResponseBrief:
         # will KeyError if missing, or propagate other types
-        return cls(decision=data["decision"])
+        return cls(decision=Decision(data["decision"]))
 
     def is_allowed(self) -> bool:
-        return self.decision == "Allow"
+        return self.decision == Decision.ALLOW
 
     def is_denied(self) -> bool:
-        return self.decision == "Deny"
+        return self.decision == Decision.DENY
 
 
 @dataclass(slots=True, frozen=True)
@@ -238,35 +244,71 @@ class PermitPolicy:
 
 
 @dataclass(slots=True, frozen=True)
+class PolicyVersion:
+    hash: str
+    loaded_at: datetime
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> PolicyVersion:
+        return cls(
+            hash=data["hash"],
+            loaded_at=datetime.fromisoformat(data["loaded_at"].replace("Z", "+00:00")),
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class CheckResponse:
-    # Either decision == "Deny" or {"Allow": PermitPolicy}
-    decision: str
+    # Either decision == Decision.DENY or Decision.ALLOW with PermitPolicy
+    decision: Decision
     policy: PermitPolicy | None
+    version: PolicyVersion | None = None
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> CheckResponse:
         dec = data["decision"]
 
-        # 1) Is it a simple Deny?
-        if dec == "Deny":
-            return cls(decision="Deny", policy=None)
+        # 1) Is it a simple Deny (old format)?
+        if dec == Decision.DENY.value:
+            return cls(decision=Decision.DENY, policy=None, version=None)
 
-        # 2) If it's a dict with an "Allow" key, pull the policy out of there
-        if isinstance(dec, dict) and "Allow" in dec:
-            policy_blob = dec["Allow"]["policy"]  # type: ignore[assignment]
+        # 2) Is it a Deny with version (new format)?
+        if isinstance(dec, dict) and Decision.DENY.value in dec:
+            deny_dict = cast(dict[str, Any], dec[Decision.DENY.value])
+            version_blob = deny_dict.get("version")
+            version = PolicyVersion.from_api(version_blob) if version_blob else None
             return cls(
-                decision="Allow",
-                policy=PermitPolicy.from_api(policy_blob),  # type: ignore[call-arg]
+                decision=Decision.DENY,
+                policy=None,
+                version=version,
             )
 
-        # 3) Otherwise it's malformed
+        # 3) If it's a dict with an "Allow" key, pull the policy and optional version
+        if isinstance(dec, dict) and Decision.ALLOW.value in dec:
+            if not isinstance(dec[Decision.ALLOW.value], dict):
+                raise ValueError(f"Malformed Allow decision: {dec!r}")
+
+            allow_dict = cast(dict[str, Any], dec[Decision.ALLOW.value])
+
+            if "policy" not in allow_dict:
+                raise ValueError(f"Allow decision missing policy: {dec!r}")
+
+            policy_blob = allow_dict["policy"]
+            version_blob = allow_dict.get("version")
+            version = PolicyVersion.from_api(version_blob) if version_blob else None
+            return cls(
+                decision=Decision.ALLOW,
+                policy=PermitPolicy.from_api(policy_blob),
+                version=version,
+            )
+
+        # 4) Otherwise it's malformed
         raise ValueError(f"Unrecognized decision shape: {dec!r}")
 
     def is_allowed(self) -> bool:
-        return self.decision == "Allow"
+        return self.decision == Decision.ALLOW
 
     def is_denied(self) -> bool:
-        return self.decision == "Deny"
+        return self.decision == Decision.DENY
 
     def policy_literal(self) -> str | None:
         """Return the policy literal if available, otherwise None."""
@@ -275,3 +317,11 @@ class CheckResponse:
     def policy_json(self) -> dict[str, Any] | None:
         """Return the policy JSON if available, otherwise None."""
         return self.policy.json if self.policy else None
+
+    def version_hash(self) -> str | None:
+        """Return the policy version hash if available, otherwise None."""
+        return self.version.hash if self.version else None
+
+    def version_loaded_at(self) -> datetime | None:
+        """Return the policy version loaded_at timestamp if available, otherwise None."""
+        return self.version.loaded_at if self.version else None

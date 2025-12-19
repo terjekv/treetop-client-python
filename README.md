@@ -1,17 +1,25 @@
 # TreeTop Client
 
 Dataclass-based HTTPX client for the [Treetop REST API](https://github.com/terjekv/treetop-rest).
-Python ≥ 3.11, zero runtime deps beyond HTTPX.
+Python ≥ 3.12, zero runtime deps beyond HTTPX.
 
 ## Example
 
 ```python
 from treetop_client.client import TreeTopClient
-from treetop_client.models import Action, Request, Resource, User, ResourceAttribute, ResourceAttributeType
-
+from treetop_client.models import (
+    Action,
+    Decision,
+    Request,
+    Resource,
+    User,
+    ResourceAttribute,
+    ResourceAttributeType,
+)
 
 client = TreeTopClient(base_url=f"http://localhost:{PORT}")
 
+attrs = {}
 attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
 attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
 
@@ -21,21 +29,30 @@ req = Request(
     resource=Resource.new("Host", id="myhost", attrs=attrs)
 )
 resp = client.check(req)
-assert resp.is_allowed() 
-assert resp.decision == "Allow"
 
-# The other possible value for decision is "Deny" which makes `is_denied()` True
-# (and `is_allowed()` False).
+# Use is_allowed() / is_denied() methods
+assert resp.is_allowed()
+# Or compare with the Decision enum
+assert resp.decision == Decision.ALLOW
 ```
 
 You can also use the `check_detailed` method to get more information about the decision:
 
 ```python
 from treetop_client.client import TreeTopClient
-from treetop_client.models import Action, Request, Resource, User, ResourceAttribute, ResourceAttributeType
+from treetop_client.models import (
+    Action,
+    Decision,
+    Request,
+    Resource,
+    User,
+    ResourceAttribute,
+    ResourceAttributeType,
+)
 
 client = TreeTopClient(base_url=f"http://localhost:{PORT}")
 
+attrs = {}
 attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
 attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
 
@@ -47,11 +64,15 @@ req = Request(
 
 resp = client.check_detailed(req)
 assert resp.is_allowed()
-assert resp.decision == "Allow"
- # This will contain the policy that was matched, in cedar format
-assert resp.policy_literal() is not None
- # This will contain the policy that was matched, in JSON format
-assert resp.policy_json() is not None
+assert resp.decision == Decision.ALLOW
+
+# Access policy information (if allowed)
+assert resp.policy_literal() is not None  # Cedar format
+assert resp.policy_json() is not None     # JSON format
+
+# Access version information (if server supports it)
+hash = resp.version_hash()           # SHA-256 hash or None
+loaded_at = resp.version_loaded_at() # datetime or None
 ```
 
 Note that for `User` the namespace and groups are optional, and for `Action` the namespace is optional. If you don't provide a namespace, it will default to the root namespace.
@@ -63,10 +84,18 @@ to trace requests across queries or services. The value is a string of the clien
 
 ```python
 from treetop_client.client import TreeTopClient
-from treetop_client.models import Action, Request, Resource, User
+from treetop_client.models import (
+    Action,
+    Request,
+    Resource,
+    User,
+    ResourceAttribute,
+    ResourceAttributeType,
+)
 
 client = TreeTopClient(base_url=f"http://localhost:{PORT}")
 
+attrs = {}
 attrs["ip"] = ResourceAttribute.new("10.0.0.1", ResourceAttributeType.IP)
 attrs["name"] = ResourceAttribute.new("myhost.example.com", ResourceAttributeType.STRING)
 

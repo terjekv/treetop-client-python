@@ -7,6 +7,7 @@ import pytest
 from treetop_client.client import TreeTopClient
 from treetop_client.models import (
     Action,
+    Decision,
     Request,
     Resource,
     ResourceAttribute,
@@ -114,7 +115,12 @@ def test_live_check_allows_user(
         ),
     )
     resp = client.check(req)
-    assert resp.decision == ("Allow" if expected else "Deny")
+    if expected:
+        assert resp.is_allowed()
+        assert resp.decision == Decision.ALLOW
+    else:
+        assert resp.is_denied()
+        assert resp.decision == Decision.DENY
 
 
 @pytest.mark.parametrize(
@@ -145,7 +151,8 @@ def test_live_check_allows_super_bare(
         resource=Resource.new(resource_kind, id, attrs),
     )
     resp = client.check(req)
-    assert resp.decision == "Allow"
+    assert resp.is_allowed()
+    assert resp.decision == Decision.ALLOW
 
 
 def test_live_check_allow_detailed(
@@ -166,7 +173,8 @@ def test_live_check_allow_detailed(
         ),
     )
     resp = client.check_detailed(req)
-    assert resp.decision == "Allow"
+    assert resp.is_allowed()
+    assert resp.decision == Decision.ALLOW
     assert resp.policy is not None
     assert (
         resp.policy_literal()
@@ -181,3 +189,6 @@ permit (
     resource is Host
 );"""
     )
+    # Verify version information is present
+    assert resp.version_hash() is not None
+    assert resp.version_loaded_at() is not None

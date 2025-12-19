@@ -2,9 +2,9 @@ services:
   integration-test-cedar-server:
     image: svenstaro/miniserve
     ports:
-      - "8999:8999"            # host 8080 → container 8080
+      - "8999:8999"            
     volumes:
-      - ./testdata:/data:ro    # your ./testdata/test.cedar lives here
+      - ./testdata:/data:ro    
     command: ["/data", "--port", "8999"]
 
   integration-test-treetop-server:
