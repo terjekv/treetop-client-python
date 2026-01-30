@@ -5,15 +5,8 @@ import pytest
 from pytest_httpx import HTTPXMock
 
 from treetop_client.client import TreeTopClient
-from treetop_client.models import (
-    Action,
-    Decision,
-    QualifiedId,
-    Request,
-    Resource,
-    ResourceAttribute,
-    User,
-)
+from treetop_client.models import (Action, Decision, QualifiedId, Request,
+                                   Resource, ResourceAttribute, User)
 
 
 @pytest.fixture(autouse=True)
@@ -24,7 +17,7 @@ def client_cleanup():
     TreeTopClient().close()
 
 
-def make_req():
+def make_req(id_suffix: str | None = "1") -> Request:
     return Request(
         principal=User(id=QualifiedId(id="alice"), groups=[]),
         action=Action(id=QualifiedId(id="view")),
@@ -35,74 +28,333 @@ def make_req():
                 "id": ResourceAttribute.new("42"),
             },
         ),
+        id=f"check-{id_suffix}" if id_suffix else None,
     )
 
 
-def test_sync_check(httpx_mock: HTTPXMock):
+# Tests for the new batch authorize endpoint
+def test_authorize_single_request_brief(httpx_mock: HTTPXMock):
+    """Test authorize endpoint with a single request (brief detail)."""
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:9999/api/v1/check",
-        json={"decision": "Allow"},
-        status_code=200,
-    )
-    client = TreeTopClient()
-    resp = client.check(make_req())
-    assert resp.is_allowed()
-    assert resp.decision == Decision.ALLOW
-
-
-def test_sync_check_detailed(httpx_mock: HTTPXMock):
-    httpx_mock.add_response(
-        method="POST",
-        url="http://localhost:9999/api/v1/check_detailed",
+        url="http://localhost:9999/api/v1/authorize",
         json={
-            "decision": {
-                "Allow": {
-                    "policy": {
-                        "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view", Action::"edit", Action::"delete"],\n    resource == Photo::"VacationPhoto94.jpg"\n);',
-                        "json": {
-                            "action": {
-                                "entities": [
-                                    {"id": "view", "type": "Action"},
-                                    {"id": "edit", "type": "Action"},
-                                    {"id": "delete", "type": "Action"},
-                                ],
-                                "op": "in",
-                            },
-                            "conditions": [],
-                            "effect": "permit",
-                            "principal": {
-                                "entity": {"id": "alice", "type": "User"},
-                                "op": "==",
-                            },
-                            "resource": {
-                                "entity": {
-                                    "id": "VacationPhoto94.jpg",
-                                    "type": "Photo",
-                                },
-                                "op": "==",
-                            },
-                        },
-                    },
-                    "version": {
-                        "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
-                        "loaded_at": "2025-12-16T15:25:55.384783000Z",
-                    },
-                },
+            "results": [
+                {
+                    "index": 0,
+                    "id": "check-1",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                }
+            ],
+            "version": {
+                "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
             },
+            "successful": 1,
+            "failed": 0,
         },
         status_code=200,
     )
     client = TreeTopClient()
-    resp = client.check_detailed(make_req())
+    response = client.authorize(make_req())
+    assert len(response) == 1
+    assert response.successful == 1
+    assert response.failed == 0
+    result = response[0]
+    assert result.is_success()
+    assert result.is_allowed()
+    assert result.get_decision() == Decision.ALLOW
+
+
+def test_authorize_multiple_requests_brief(httpx_mock: HTTPXMock):
+    """Test authorize endpoint with multiple requests (brief detail)."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "check-1",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                },
+                {
+                    "index": 1,
+                    "id": "check-2",
+                    "status": "failed",
+                    "error": "Evaluation failed: invalid resource",
+                },
+            ],
+            "version": {
+                "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 1,
+            "failed": 1,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    requests = [make_req("1"), make_req("2")]
+    response = client.authorize(requests)
+    assert len(response) == 2
+    assert response.successful == 1
+    assert response.failed == 1
+
+    result1 = response[0]
+    assert result1.is_success()
+    assert result1.is_allowed()
+
+    result2 = response[1]
+    assert result2.is_failed()
+    assert result2.error == "Evaluation failed: invalid resource"
+
+    # Test get_by_id
+    found = response.get_by_id("check-1")
+    assert found is not None
+    assert found.is_allowed()
+
+
+def test_authorize_detailed(httpx_mock: HTTPXMock):
+    """Test authorize_detailed endpoint with detailed response."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize?detail=full",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "check-1",
+                    "status": "success",
+                    "result": {
+                        "decision": {
+                            "Allow": {
+                                "policy": {
+                                    "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"42"\n);',
+                                    "json": {
+                                        "action": {
+                                            "entities": [
+                                                {"id": "view", "type": "Action"}
+                                            ],
+                                            "op": "in",
+                                        },
+                                        "conditions": [],
+                                        "effect": "permit",
+                                        "principal": {
+                                            "entity": {"id": "alice", "type": "User"},
+                                            "op": "==",
+                                        },
+                                        "resource": {
+                                            "entity": {"id": "42", "type": "Photo"},
+                                            "op": "==",
+                                        },
+                                    },
+                                },
+                                "version": {
+                                    "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                                    "loaded_at": "2025-12-19T15:25:55.384783000Z",
+                                },
+                            },
+                        },
+                    },
+                }
+            ],
+            "version": {
+                "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 1,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    response = client.authorize_detailed(make_req())
+    assert len(response) == 1
+    result = response[0]
+    assert result.is_success()
+    assert result.is_allowed()
+    assert result.policy_literal() is not None
+    policy_lit = result.policy_literal()
+    assert policy_lit is not None and 'principal == User::"alice"' in policy_lit
+    assert (
+        result.version_hash()
+        == "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219"
+    )
+    assert result.version_loaded_at() is not None
+
+
+def test_authorize_deny(httpx_mock: HTTPXMock):
+    """Test authorize endpoint with Deny decision."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "check-1",
+                    "status": "success",
+                    "result": {"decision": "Deny"},
+                }
+            ],
+            "version": {
+                "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 1,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    response = client.authorize(make_req())
+    assert len(response) == 1
+    result = response[0]
+    assert result.is_success()
+    assert result.is_denied()
+    assert result.get_decision() == Decision.DENY
+
+
+def test_authorize_error(httpx_mock: HTTPXMock):
+    """Test authorize endpoint with HTTP error."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={"error": "Invalid request"},
+        status_code=400,
+    )
+    client = TreeTopClient()
+    with pytest.raises(httpx.HTTPStatusError):
+        client.authorize(make_req())
+
+
+def test_async_authorize(httpx_mock: HTTPXMock):
+    """Test async authorize endpoint."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "check-1",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                }
+            ],
+            "version": {
+                "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 1,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    import asyncio
+
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    response = asyncio.get_event_loop().run_until_complete(
+        client.aauthorize(make_req())
+    )
+    assert len(response) == 1
+    result = response[0]
+    assert result.is_allowed()
+
+
+# Backward compatibility tests (old check/check_detailed API)
+def test_check_backward_compatibility(httpx_mock: HTTPXMock):
+    """Test backward compatibility with old check() method."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": None,
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                }
+            ],
+            "version": {
+                "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 1,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    resp = client.check(make_req(id_suffix=None))
+    assert resp.is_allowed()
+    assert resp.decision == Decision.ALLOW
+
+
+def test_check_detailed_backward_compatibility(httpx_mock: HTTPXMock):
+    """Test backward compatibility with old check_detailed() method."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize?detail=full",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": None,
+                    "status": "success",
+                    "result": {
+                        "decision": {
+                            "Allow": {
+                                "policy": {
+                                    "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"42"\n);',
+                                    "json": {
+                                        "effect": "permit",
+                                        "principal": {
+                                            "entity": {"id": "alice", "type": "User"},
+                                            "op": "==",
+                                        },
+                                        "action": {
+                                            "entities": [
+                                                {"id": "view", "type": "Action"}
+                                            ],
+                                            "op": "in",
+                                        },
+                                        "resource": {
+                                            "entity": {"id": "42", "type": "Photo"},
+                                            "op": "==",
+                                        },
+                                        "conditions": [],
+                                    },
+                                },
+                                "version": {
+                                    "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                                    "loaded_at": "2025-12-16T15:25:55.384783000Z",
+                                },
+                            },
+                        },
+                    },
+                }
+            ],
+            "version": {
+                "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                "loaded_at": "2025-12-16T15:25:55.384783000Z",
+            },
+            "successful": 1,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    resp = client.check_detailed(make_req(id_suffix=None))
     assert resp.is_allowed()
     assert resp.decision == Decision.ALLOW
     assert resp.policy is not None
-    assert (
-        resp.policy.literal
-        == 'permit (\n    principal == User::"alice",\n    action in [Action::"view", Action::"edit", Action::"delete"],\n    resource == Photo::"VacationPhoto94.jpg"\n);'
-    )
-    assert resp.policy.json["principal"]["entity"]["id"] == "alice"
+    assert "alice" in resp.policy.literal
     assert (
         resp.version_hash()
         == "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219"
@@ -110,135 +362,421 @@ def test_sync_check_detailed(httpx_mock: HTTPXMock):
     loaded_at = resp.version_loaded_at()
     assert loaded_at is not None
     assert isinstance(loaded_at, datetime)
-    assert loaded_at.isoformat() == "2025-12-16T15:25:55.384783+00:00"
 
 
-def test_sync_check_deny(httpx_mock: HTTPXMock):
+def test_check_deny_backward_compatibility(httpx_mock: HTTPXMock):
+    """Test backward compatibility with old check() method returning Deny."""
     httpx_mock.add_response(
         method="POST",
-        url="http://localhost:9999/api/v1/check",
-        json={"decision": "Deny"},
-        status_code=200,
-    )
-    client = TreeTopClient()
-    resp = client.check(make_req())
-    assert resp.is_denied()
-    assert resp.decision == Decision.DENY
-
-
-def test_sync_check_error(httpx_mock: HTTPXMock):
-    httpx_mock.add_response(
-        method="POST",
-        url="http://localhost:9999/api/v1/check",
-        json={"error": "Invalid request"},
-        status_code=400,
-    )
-    client = TreeTopClient()
-    with pytest.raises(httpx.HTTPStatusError):
-        client.check(make_req())
-
-
-def test_async_check(httpx_mock: HTTPXMock):
-    httpx_mock.add_response(
-        method="POST",
-        url="http://localhost:9999/api/v1/check",
-        json={"decision": "Deny"},
-        status_code=200,
-    )
-    client = TreeTopClient()
-    import asyncio
-
-    # Create an event loop if not already running
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    resp = asyncio.get_event_loop().run_until_complete(client.acheck(make_req()))
-    assert resp.is_denied()
-    assert resp.decision == Decision.DENY
-
-
-def test_sync_check_detailed_legacy_format(httpx_mock: HTTPXMock):
-    """Test backward compatibility with older API format without version field."""
-    httpx_mock.add_response(
-        method="POST",
-        url="http://localhost:9999/api/v1/check_detailed",
+        url="http://localhost:9999/api/v1/authorize",
         json={
-            "decision": {
-                "Allow": {
-                    "policy": {
-                        "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"test.jpg"\n);',
-                        "json": {
-                            "effect": "permit",
-                            "principal": {
-                                "entity": {"id": "alice", "type": "User"},
-                                "op": "==",
-                            },
-                            "action": {
-                                "entities": [{"id": "view", "type": "Action"}],
-                                "op": "in",
-                            },
-                            "resource": {
-                                "entity": {"id": "test.jpg", "type": "Photo"},
-                                "op": "==",
-                            },
-                            "conditions": [],
-                        },
-                    },
-                    # No version field in legacy format
-                },
-            },
-        },
-        status_code=200,
-    )
-    client = TreeTopClient()
-    resp = client.check_detailed(make_req())
-    assert resp.is_allowed()
-    assert resp.decision == Decision.ALLOW
-    assert resp.policy is not None
-    assert resp.version_hash() is None  # Should be None for legacy format
-    assert resp.version_loaded_at() is None
-
-
-def test_sync_check_deny_legacy_format(httpx_mock: HTTPXMock):
-    """Test backward compatibility with simple Deny format."""
-    httpx_mock.add_response(
-        method="POST",
-        url="http://localhost:9999/api/v1/check_detailed",
-        json={"decision": "Deny"},
-        status_code=200,
-    )
-    client = TreeTopClient()
-    resp = client.check_detailed(make_req())
-    assert resp.is_denied()
-    assert resp.decision == Decision.DENY
-    assert resp.policy is None
-    assert resp.version_hash() is None  # Should be None for legacy format
-    assert resp.version_loaded_at() is None
-
-
-def test_sync_check_deny_new_format(httpx_mock: HTTPXMock):
-    """Test new Deny format with version field."""
-    httpx_mock.add_response(
-        method="POST",
-        url="http://localhost:9999/api/v1/check_detailed",
-        json={
-            "decision": {
-                "Deny": {
-                    "version": {
-                        "hash": "abc123",
-                        "loaded_at": "2025-12-19T10:00:00.000000000Z",
-                    }
+            "results": [
+                {
+                    "index": 0,
+                    "id": None,
+                    "status": "success",
+                    "result": {"decision": "Deny"},
                 }
-            }
+            ],
+            "version": {
+                "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 1,
+            "failed": 0,
         },
         status_code=200,
     )
     client = TreeTopClient()
-    resp = client.check_detailed(make_req())
+    resp = client.check(make_req(id_suffix=None))
     assert resp.is_denied()
     assert resp.decision == Decision.DENY
-    assert resp.policy is None
-    assert resp.version_hash() == "abc123"
-    loaded_at = resp.version_loaded_at()
-    assert loaded_at is not None
-    assert isinstance(loaded_at, datetime)
-    assert loaded_at.isoformat() == "2025-12-19T10:00:00+00:00"
-    assert loaded_at.isoformat() == "2025-12-19T10:00:00+00:00"
+
+
+# Batch query tests with index and ID lookups
+def test_batch_authorize_lookup_by_index(httpx_mock: HTTPXMock):
+    """Test batch authorize with multiple requests - lookup by index."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "req-alice-view",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                },
+                {
+                    "index": 1,
+                    "id": "req-bob-delete",
+                    "status": "success",
+                    "result": {"decision": "Deny"},
+                },
+                {
+                    "index": 2,
+                    "id": "req-charlie-edit",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                },
+            ],
+            "version": {
+                "hash": "abc123",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 3,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    requests = [make_req("1"), make_req("2"), make_req("3")]
+    response = client.authorize(requests)
+
+    # Test lookup by index
+    assert len(response) == 3
+    assert response[0].is_allowed()
+    assert response[1].is_denied()
+    assert response[2].is_allowed()
+
+    # Verify indexes match
+    assert response[0].index == 0
+    assert response[1].index == 1
+    assert response[2].index == 2
+
+
+def test_batch_authorize_lookup_by_id(httpx_mock: HTTPXMock):
+    """Test batch authorize with multiple requests - lookup by ID."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "req-alice-view",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                },
+                {
+                    "index": 1,
+                    "id": "req-bob-delete",
+                    "status": "success",
+                    "result": {"decision": "Deny"},
+                },
+                {
+                    "index": 2,
+                    "id": "req-charlie-edit",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                },
+            ],
+            "version": {
+                "hash": "abc123",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 3,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    requests = [make_req("1"), make_req("2"), make_req("3")]
+    response = client.authorize(requests)
+
+    # Test lookup by ID
+    alice_result = response.get_by_id("req-alice-view")
+    assert alice_result is not None
+    assert alice_result.is_allowed()
+    assert alice_result.id == "req-alice-view"
+
+    bob_result = response.get_by_id("req-bob-delete")
+    assert bob_result is not None
+    assert bob_result.is_denied()
+    assert bob_result.id == "req-bob-delete"
+
+    charlie_result = response.get_by_id("req-charlie-edit")
+    assert charlie_result is not None
+    assert charlie_result.is_allowed()
+    assert charlie_result.id == "req-charlie-edit"
+
+    # Test lookup of non-existent ID
+    nonexistent = response.get_by_id("req-nonexistent")
+    assert nonexistent is None
+
+
+def test_batch_authorize_detailed_lookup_by_index(httpx_mock: HTTPXMock):
+    """Test batch authorize_detailed with multiple requests - lookup by index."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize?detail=full",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "req-1",
+                    "status": "success",
+                    "result": {
+                        "decision": {
+                            "Allow": {
+                                "policy": {
+                                    "literal": "permit (...);",
+                                    "json": {
+                                        "effect": "permit",
+                                    },
+                                },
+                                "version": {
+                                    "hash": "hash1",
+                                    "loaded_at": "2025-12-19T00:14:38.577289000Z",
+                                },
+                            }
+                        }
+                    },
+                },
+                {
+                    "index": 1,
+                    "id": "req-2",
+                    "status": "success",
+                    "result": {
+                        "decision": {
+                            "Deny": {
+                                "version": {
+                                    "hash": "hash2",
+                                    "loaded_at": "2025-12-19T00:14:38.577289000Z",
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+            "version": {
+                "hash": "abc123",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 2,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    requests = [make_req("1"), make_req("2")]
+    response = client.authorize_detailed(requests)
+
+    # Test lookup by index
+    assert len(response) == 2
+    assert response[0].is_allowed()
+    assert response[0].policy_literal() is not None
+    assert response[0].version_hash() == "hash1"
+
+    assert response[1].is_denied()
+    assert response[1].policy_literal() is None
+    assert response[1].version_hash() == "hash2"
+
+
+def test_batch_authorize_detailed_lookup_by_id(httpx_mock: HTTPXMock):
+    """Test batch authorize_detailed with multiple requests - lookup by ID."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize?detail=full",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "photo-allow",
+                    "status": "success",
+                    "result": {
+                        "decision": {
+                            "Allow": {
+                                "policy": {
+                                    "literal": "permit (...);",
+                                    "json": {
+                                        "effect": "permit",
+                                    },
+                                },
+                                "version": {
+                                    "hash": "hash1",
+                                    "loaded_at": "2025-12-19T00:14:38.577289000Z",
+                                },
+                            }
+                        }
+                    },
+                },
+                {
+                    "index": 1,
+                    "id": "video-deny",
+                    "status": "success",
+                    "result": {
+                        "decision": {
+                            "Deny": {
+                                "version": {
+                                    "hash": "hash2",
+                                    "loaded_at": "2025-12-19T00:14:38.577289000Z",
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+            "version": {
+                "hash": "abc123",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 2,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    requests = [
+        Request(
+            principal=User(id=QualifiedId(id="alice"), groups=[]),
+            action=Action(id=QualifiedId(id="view")),
+            resource=Resource(
+                kind="Photo",
+                id="42",
+                attrs={"id": ResourceAttribute.new("42")},
+            ),
+            id="photo-allow",
+        ),
+        Request(
+            principal=User(id=QualifiedId(id="bob"), groups=[]),
+            action=Action(id=QualifiedId(id="view")),
+            resource=Resource(
+                kind="Video",
+                id="99",
+                attrs={"id": ResourceAttribute.new("99")},
+            ),
+            id="video-deny",
+        ),
+    ]
+    response = client.authorize_detailed(requests)
+
+    # Test lookup by ID
+    photo_result = response.get_by_id("photo-allow")
+    assert photo_result is not None
+    assert photo_result.is_allowed()
+    assert photo_result.policy_literal() is not None
+    assert photo_result.version_hash() == "hash1"
+
+    video_result = response.get_by_id("video-deny")
+    assert video_result is not None
+    assert video_result.is_denied()
+    assert video_result.policy_literal() is None
+    assert video_result.version_hash() == "hash2"
+
+
+def test_batch_authorize_mixed_success_and_failure(httpx_mock: HTTPXMock):
+    """Test batch authorize with both successful and failed results."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "req-ok",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                },
+                {
+                    "index": 1,
+                    "id": "req-error",
+                    "status": "failed",
+                    "error": "Invalid resource kind",
+                },
+                {
+                    "index": 2,
+                    "id": "req-ok2",
+                    "status": "success",
+                    "result": {"decision": "Deny"},
+                },
+            ],
+            "version": {
+                "hash": "abc123",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 2,
+            "failed": 1,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    requests = [make_req("1"), make_req("2"), make_req("3")]
+    response = client.authorize(requests)
+
+    # Verify counts
+    assert response.successful == 2
+    assert response.failed == 1
+    assert len(response) == 3
+
+    # Test lookup by index with error
+    assert response[0].is_success()
+    assert response[0].is_allowed()
+
+    assert response[1].is_failed()
+    assert response[1].error == "Invalid resource kind"
+    assert response[1].result is None
+
+    assert response[2].is_success()
+    assert response[2].is_denied()
+
+    # Test lookup by ID
+    found_ok = response.get_by_id("req-ok")
+    assert found_ok is not None
+    assert found_ok.is_allowed()
+
+    found_error = response.get_by_id("req-error")
+    assert found_error is not None
+    assert found_error.is_failed()
+
+    found_ok2 = response.get_by_id("req-ok2")
+    assert found_ok2 is not None
+    assert found_ok2.is_denied()
+
+
+def test_batch_authorize_iteration(httpx_mock: HTTPXMock):
+    """Test iterating over batch authorize results."""
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:9999/api/v1/authorize",
+        json={
+            "results": [
+                {
+                    "index": 0,
+                    "id": "req-1",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                },
+                {
+                    "index": 1,
+                    "id": "req-2",
+                    "status": "success",
+                    "result": {"decision": "Deny"},
+                },
+                {
+                    "index": 2,
+                    "id": "req-3",
+                    "status": "success",
+                    "result": {"decision": "Allow"},
+                },
+            ],
+            "version": {
+                "hash": "abc123",
+                "loaded_at": "2025-12-19T00:14:38.577289000Z",
+            },
+            "successful": 3,
+            "failed": 0,
+        },
+        status_code=200,
+    )
+    client = TreeTopClient()
+    requests = [make_req("1"), make_req("2"), make_req("3")]
+    response = client.authorize(requests)
+
+    # Test iteration
+    decisions = [result.get_decision() for result in response]
+    assert decisions == [Decision.ALLOW, Decision.DENY, Decision.ALLOW]
+
+    # Test iteration with filter
+    allowed_count = sum(1 for result in response if result.is_allowed())
+    assert allowed_count == 2

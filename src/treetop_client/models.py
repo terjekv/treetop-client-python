@@ -4,7 +4,7 @@ import enum
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 _COLON = re.compile(r":")
 
@@ -16,8 +16,7 @@ def _no_colon(value: str, *, field_name: str) -> str:
 
 
 class Endpoint(enum.Enum):
-    CHECK = "/api/v1/check"
-    CHECK_DETAILED = "/api/v1/check_detailed"
+    AUTHORIZE = "/api/v1/authorize"
 
 
 class Decision(str, enum.Enum):
@@ -191,12 +190,13 @@ class Request:
     principal: Principal
     action: Action
     resource: Resource
+    id: str | None = None
 
     def to_api(self) -> dict[str, Any]:
         # Principal: User already returns {"User": {...}}.
         # Group should be wrapped as {"Group": {...}} here.
         if isinstance(self.principal, User):
-            principal_payload = {"User": self.principal.to_api()}
+            principal_payload: dict[str, Any] = {"User": self.principal.to_api()}
         elif isinstance(self.principal, Group):  # type: ignore[unreachable]
             principal_payload = {"Group": self.principal.to_api()}
         else:
@@ -204,11 +204,14 @@ class Request:
                 f"Unsupported principal type: {type(self.principal).__name__}"
             )
 
-        return {
+        result: dict[str, Any] = {
             "principal": principal_payload,
             "action": self.action.to_api(),
             "resource": self.resource.to_api(),
         }
+        if self.id is not None:
+            result["id"] = self.id
+        return result
 
 
 def as_api(obj: Request | dict[str, Any]) -> dict[str, Any]:
@@ -216,15 +219,18 @@ def as_api(obj: Request | dict[str, Any]) -> dict[str, Any]:
 
 
 @dataclass(slots=True, frozen=True)
-class CheckResponseBrief:
+class AuthorizedResponseBrief:
     decision: Decision
 
     _KEYS: ClassVar[tuple[str, ...]] = ("decision",)
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> CheckResponseBrief:
+    def from_api(cls, data: dict[str, Any]) -> AuthorizedResponseBrief:
         # will KeyError if missing, or propagate other types
-        return cls(decision=Decision(data["decision"]))
+        dec = data.get("decision", data.get("desicion"))
+        if dec is None:
+            raise KeyError("decision")
+        return cls(decision=Decision(dec))
 
     def is_allowed(self) -> bool:
         return self.decision == Decision.ALLOW
@@ -257,19 +263,36 @@ class PolicyVersion:
 
 
 @dataclass(slots=True, frozen=True)
-class CheckResponse:
+class AuthorizedResponseDetailed:
     # Either decision == Decision.DENY or Decision.ALLOW with PermitPolicy
     decision: Decision
     policy: PermitPolicy | None
     version: PolicyVersion | None = None
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> CheckResponse:
-        dec = data["decision"]
+    def from_api(cls, data: dict[str, Any]) -> AuthorizedResponseDetailed:
+        dec = data.get("decision", data.get("desicion")) # Temporary typo support
+        if dec is None:
+            raise KeyError("decision")
 
         # 1) Is it a simple Deny (old format)?
         if dec == Decision.DENY.value:
-            return cls(decision=Decision.DENY, policy=None, version=None)
+            version_blob = data.get("version")
+            version = PolicyVersion.from_api(version_blob) if version_blob else None
+            return cls(decision=Decision.DENY, policy=None, version=version)
+
+        # 1b) Is it a simple Allow with top-level policy/version?
+        if dec == Decision.ALLOW.value:
+            if "policy" not in data:
+                raise ValueError(f"Allow decision missing policy: {data!r}")
+            policy_blob = data["policy"]
+            version_blob = data.get("version")
+            version = PolicyVersion.from_api(version_blob) if version_blob else None
+            return cls(
+                decision=Decision.ALLOW,
+                policy=PermitPolicy.from_api(policy_blob),
+                version=version,
+            )
 
         # 2) Is it a Deny with version (new format)?
         if isinstance(dec, dict) and Decision.DENY.value in dec:
@@ -325,3 +348,169 @@ class CheckResponse:
     def version_loaded_at(self) -> datetime | None:
         """Return the policy version loaded_at timestamp if available, otherwise None."""
         return self.version.loaded_at if self.version else None
+
+
+# Generic type variables for authorization results and responses
+ResultT = TypeVar('ResultT', bound='AuthorizedResponseBrief | AuthorizedResponseDetailed')
+T = TypeVar('T', bound='AuthorizeResultBrief | AuthorizeResultDetailed')
+
+
+@dataclass(slots=True, frozen=True)
+class AuthorizeResultBase(Generic[ResultT]):
+    """Base class for a single result from the authorize endpoint."""
+
+    index: int
+    id: str | None
+    status: str
+    result: ResultT | None = None
+    error: str | None = None
+
+    def is_success(self) -> bool:
+        """Check if this result is successful."""
+        return self.status == "success"
+
+    def is_failed(self) -> bool:
+        """Check if this result failed."""
+        return self.status == "failed"
+
+    def get_decision(self) -> Decision | None:
+        """Get the decision if successful, otherwise None."""
+        return self.result.decision if self.result else None
+
+    def is_allowed(self) -> bool:
+        """Check if the decision is Allow."""
+        return self.result.is_allowed() if self.result else False
+
+    def is_denied(self) -> bool:
+        """Check if the decision is Deny."""
+        return self.result.is_denied() if self.result else False
+
+
+@dataclass(slots=True, frozen=True)
+class AuthorizeResultBrief(AuthorizeResultBase[AuthorizedResponseBrief]):
+    """A single result from the authorize endpoint (brief detail level)."""
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> AuthorizeResultBrief:
+        index = data["index"]
+        result_id = data.get("id")
+        status = data["status"]
+        error = data.get("error")
+
+        result = None
+        if status == "success" and "result" in data:
+            result = AuthorizedResponseBrief.from_api(data["result"])
+
+        return cls(index=index, id=result_id, status=status, result=result, error=error)
+
+
+@dataclass(slots=True, frozen=True)
+class AuthorizeResultDetailed(AuthorizeResultBase[AuthorizedResponseDetailed]):
+    """A single result from the authorize endpoint (detailed level)."""
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> AuthorizeResultDetailed:
+        index = data["index"]
+        result_id = data.get("id")
+        status = data["status"]
+        error = data.get("error")
+
+        result = None
+        if status == "success" and "result" in data:
+            result = AuthorizedResponseDetailed.from_api(data["result"])
+
+        return cls(index=index, id=result_id, status=status, result=result, error=error)
+
+    def policy_literal(self) -> str | None:
+        """Return the policy literal if available, otherwise None."""
+        return self.result.policy_literal() if self.result else None
+
+    def policy_json(self) -> dict[str, Any] | None:
+        """Return the policy JSON if available, otherwise None."""
+        return self.result.policy_json() if self.result else None
+
+    def version_hash(self) -> str | None:
+        """Return the policy version hash if available, otherwise None."""
+        return self.result.version_hash() if self.result else None
+
+    def version_loaded_at(self) -> datetime | None:
+        """Return the policy version loaded_at timestamp if available, otherwise None."""
+        return self.result.version_loaded_at() if self.result else None
+
+
+# Generic type variables for authorization results and responses
+ResultT = TypeVar('ResultT', bound='AuthorizedResponseBrief | AuthorizedResponseDetailed')
+T = TypeVar('T', bound='AuthorizeResultBrief | AuthorizeResultDetailed')
+
+
+@dataclass(slots=True, frozen=True)
+class AuthorizeResponseBase(Generic[T]):
+    """Base class for batch responses from the authorize endpoint."""
+
+    results: list[T]
+    version: PolicyVersion
+    successful: int
+    failed: int
+
+    def __iter__(self):
+        """Iterate over results."""
+        return iter(self.results)
+
+    def __len__(self):
+        """Return the number of results."""
+        return len(self.results)
+
+    def __getitem__(self, index: int) -> T:
+        """Get result by index."""
+        return self.results[index]
+
+    def get_by_id(self, request_id: str) -> T | None:
+        """Get result by client-provided request ID."""
+        for result in self.results:
+            if result.id == request_id:
+                return result
+        return None
+
+    def denied_count(self) -> int:
+        """Return the number of denied results."""
+        return sum(1 for r in self.results if r.is_success() and r.is_denied())
+
+    def allowed_count(self) -> int:
+        """Return the number of allowed results."""
+        return sum(1 for r in self.results if r.is_success() and r.is_allowed())
+
+    def all_allowed(self) -> bool:
+        """Check if all successful results are allowed."""
+        return all(r.is_allowed() for r in self.results if r.is_success())
+
+
+@dataclass(slots=True, frozen=True)
+class AuthorizeResponseBrief(AuthorizeResponseBase[AuthorizeResultBrief]):
+    """Batch response from the authorize endpoint (brief detail level)."""
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> AuthorizeResponseBrief:
+        results = [AuthorizeResultBrief.from_api(r) for r in data.get("results", [])]
+        version = PolicyVersion.from_api(data["version"])
+        successful = data.get("successful", 0)
+        failed = data.get("failed", 0)
+
+        return cls(
+            results=results, version=version, successful=successful, failed=failed
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuthorizeResponseDetailed(AuthorizeResponseBase[AuthorizeResultDetailed]):
+    """Batch response from the authorize endpoint (detailed level)."""
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> AuthorizeResponseDetailed:
+        results = [AuthorizeResultDetailed.from_api(r) for r in data.get("results", [])]
+        version = PolicyVersion.from_api(data["version"])
+        successful = data.get("successful", 0)
+        failed = data.get("failed", 0)
+
+        return cls(
+            results=results, version=version, successful=successful, failed=failed
+        )
