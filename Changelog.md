@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **New unified batch authorization endpoint** (`POST /api/v1/authorize`):
+  - `authorize()` method for synchronous batch processing with brief response details
+  - `authorize_detailed()` method for synchronous batch processing with policy information
+  - `aauthorize()` method for asynchronous batch processing (brief)
+  - `aauthorize_detailed()` method for asynchronous batch processing (detailed)
+  - Optional `id` field on `Request` for client-provided request correlation identifiers
+  - `AuthorizeResponseBrief` and `AuthorizeResponseDetailed` for typed batch responses
+  - `AuthorizeResultBrief` and `AuthorizeResultDetailed` for individual result handling
+  - Response iteration, indexing, and `get_by_id()` method for convenient result access
+  - Result helper methods: `is_success()`, `is_failed()`, `is_allowed()`, `is_denied()`, `get_decision()`
+  - Batch response helper methods: `denied_count()`, `allowed_count()`, `all_allowed()`
+
+### Changed
+
+- **BREAKING**: Legacy single-request endpoints (`/api/v1/check` and `/api/v1/check_detailed`) are no longer used directly
+- `check()`, `check_detailed()`, `acheck()`, and `acheck_detailed()` methods now wrap the new batch API for backward compatibility
+- Query parameter `detail=full` (instead of separate endpoint) now controls response detail level
+- Renamed `CheckResponseBrief` to `AuthorizedResponseBrief` (backward compatibility alias provided)
+- Renamed `CheckResponse` to `AuthorizedResponseDetailed` (backward compatibility alias provided)
+
+### Deprecated
+
+- Direct use of `check()` and `check_detailed()` for new code; use `authorize()` and `authorize_detailed()` for batch operations
+- Old class names `CheckResponseBrief` and `CheckResponse` (use `AuthorizedResponseBrief` and `AuthorizedResponseDetailed` instead)
+
 ## [0.0.5] - 2025-12-19
 
 ### Added
