@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Query parameter `detail=full` (instead of separate endpoint) now controls response detail level
 - Renamed `CheckResponseBrief` to `AuthorizedResponseBrief` (backward compatibility alias provided)
 - Renamed `CheckResponse` to `AuthorizedResponseDetailed` (backward compatibility alias provided)
+- Migrated from Poetry to uv for dependency management and build system
+- Build backend changed from `poetry-core` to `hatchling`
 
 ### Deprecated
 

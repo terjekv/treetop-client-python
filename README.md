@@ -203,14 +203,23 @@ response = client.authorize([req1, req2], correlation_id="batch-trace-id")
 - `Action` namespace is optional; it defaults to the root namespace if not provided
 - Each `Request` can optionally have an `id` field for client-provided correlation IDs in batch operations
 
-## Integration tests
+## Development
 
-Make sure you have Docker & Docker Compose installed.
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 
 ```bash
-# Run only unit tests:
-pytest
+# Install dependencies (including dev dependencies)
+uv sync --extra dev
 
-# Run integration tests (will spin up Docker Compose):
-pytest -m integration
+# Run tests
+uv run pytest
+
+# Run integration tests (requires Docker & Docker Compose)
+uv run pytest -m integration
+
+# Add a new dependency
+uv add package-name
+
+# Add a dev dependency
+uv add --dev package-name
 ```
