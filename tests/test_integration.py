@@ -233,6 +233,7 @@ def test_live_batch_authorize_lookup_by_id(
     requests = [
         make_request("alice", "delete_host", "dangerous.example.com", ["admins"], "admin-delete", "10.0.0.99"),
         make_request("bob", "delete_host", "restricted.example.com", ["users"], "user-delete", "10.0.0.88"),
+        make_request("freddy", "create_host", "web-01.example.com", ["webadmins"], "webadmin-create", "192.168.1.4"),
     ]
 
     response = client.authorize(requests)
@@ -245,6 +246,10 @@ def test_live_batch_authorize_lookup_by_id(
     user_result = response.get_by_id("user-delete")
     assert user_result is not None
     assert user_result.is_denied()  # bob cannot delete_host (user)
+
+    webadmin_result = response.get_by_id("webadmin-create") 
+    assert webadmin_result is not None
+    assert webadmin_result.is_allowed()  # freddy can create_host (webadmin with valid labels and IP in range)    
 
     # Verify non-existent ID returns None
     nonexistent = response.get_by_id("nonexistent-id")

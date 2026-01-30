@@ -14,8 +14,8 @@ permit (
     resource is Host
 );
 
-// Webadmins can edit, delete, or create hosts with a name label containing "webserver", and the IP
-// address must be in the range 192.168.1.0/24
+// Webadmins can edit, delete, or create hosts with a name label containing "valid_webserver_name",
+// and the IP address must be in the range 192.168.1.0/24
 @id("DNS.webadmins_policy")
 permit (
     principal in DNS::Group::"webadmins",
@@ -27,8 +27,8 @@ permit (
 )
 when
 {
-    resource.nameLabels.contains("webserver") &&
-    resource.ip.isInRange("192.168.1.0/24")
+    resource.nameLabels.contains("valid_webserver_name") &&
+    resource.ip.isInRange(ip("192.168.1.0/24"))
 };
 
 // Users can only view hosts
@@ -102,4 +102,3 @@ permit (
     action,
     resource
 );
-

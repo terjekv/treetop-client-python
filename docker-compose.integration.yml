@@ -18,9 +18,9 @@ services:
       - TREETOP_PORT=9999
       - TREETOP_CLIENT_ALLOWLIST=*
       - TREETOP_POLICY_URL=http://integration-test-cedar-server:18999/dns.cedar
-      - TREETOP_HOST_LABELS_URL=http://integration-test-cedar-server:18999/hostlabels.json
-      - TREETOP_POLICY_UPDATE_FREQUENCY=2
-      - TREETOP_HOST_LABELS_UPDATE_FREQUENCY=2
+      - TREETOP_LABELS_URL=http://integration-test-cedar-server:18999/labels.json
+      - TREETOP_POLICY_UPDATE_FREQUENCY=120
+      - TREETOP_LABELS_UPDATE_FREQUENCY=120
     depends_on:
       - integration-test-cedar-server
     healthcheck:
