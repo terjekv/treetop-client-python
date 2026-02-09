@@ -29,6 +29,15 @@ def make_host_resource(
     )
 
 
+def make_ip_resource(ip: str) -> Resource:
+    """Create an IPAddress resource with an IP attribute."""
+    return Resource.new(
+        kind="IPAddress",
+        id=ip,
+        attrs={"ip": ResourceAttribute.new(ip, type=ResourceAttributeType.IP)},
+    )
+
+
 def make_request(
     principal: str,
     action: str,
@@ -169,6 +178,7 @@ def test_live_check_allows_super_bare(
     resp = client.check(req)
     assert resp.is_allowed()
     assert resp.decision == Decision.ALLOW
+    assert resp.policy_ids()
 
 
 def test_live_check_allow_detailed(
@@ -178,10 +188,10 @@ def test_live_check_allow_detailed(
     resp = client.check_detailed(req)
     assert resp.is_allowed()
     assert resp.decision == Decision.ALLOW
-    assert resp.policy is not None
-    assert (
-        resp.policy_literal()
-        == """@id("DNS.admins_policy")
+    assert resp.policies
+    assert all(policy.id for policy in resp.policies)
+    assert [policy.literal for policy in resp.policies] == [
+        """@id("DNS.admins_policy")
 permit (
     principal in DNS::Group::"admins",
     action in
@@ -191,10 +201,40 @@ permit (
          DNS::Action::"edit_host"],
     resource is Host
 );"""
-    )
+    ]
     # Verify version information is present
     assert resp.version_hash() is not None
     assert resp.version_loaded_at() is not None
+
+
+def test_live_check_detailed_multiple_policies_admins_ip_network(
+    client: TreeTopClient,
+):
+    req = Request(
+        principal=User.new("alice", NAMESPACE, ["admins"]),
+        action=Action.new("ip_network_management", NAMESPACE),
+        resource=make_ip_resource("10.0.0.1"),
+    )
+    resp = client.check_detailed(req)
+    assert resp.is_allowed()
+    assert resp.policies
+    assert all(policy.id for policy in resp.policies)
+    policy_literals = [policy.literal for policy in resp.policies]
+    assert any("DNS.admins_ip_policy" in policy for policy in policy_literals)
+    assert any("DNS.admins_ip_network_policy" in policy for policy in policy_literals)
+
+
+def test_live_check_detailed_multiple_policies_admins_users_view_host(
+    client: TreeTopClient,
+):
+    req = make_request("alice", "view_host", "host.example.com", ["admins", "users"])
+    resp = client.check_detailed(req)
+    assert resp.is_allowed()
+    assert resp.policies
+    assert all(policy.id for policy in resp.policies)
+    policy_literals = [policy.literal for policy in resp.policies]
+    assert any("DNS.admins_policy" in policy for policy in policy_literals)
+    assert any("DNS.users_policy" in policy for policy in policy_literals)
 
 
 # Batch authorization tests
@@ -274,17 +314,19 @@ def test_live_batch_authorize_detailed_multiple_requests(
     # Verify detailed results by index
     alice_result = response[0]
     assert alice_result.is_allowed()
-    alice_policy = alice_result.policy_literal()
-    assert alice_policy is not None
-    assert "admins_policy" in alice_policy
-    assert alice_result.version_hash() is not None
+    assert alice_result.result is not None
+    alice_policy = [policy.literal for policy in alice_result.result.policies]
+    assert any("admins_policy" in policy for policy in alice_policy)
+    assert alice_result.result is not None
+    assert alice_result.result.version_hash() is not None
 
     bob_result = response[1]
     assert bob_result.is_allowed()
-    bob_policy = bob_result.policy_literal()
-    assert bob_policy is not None
-    assert "users_policy" in bob_policy
-    assert bob_result.version_hash() is not None
+    assert bob_result.result is not None
+    bob_policy = [policy.literal for policy in bob_result.result.policies]
+    assert any("users_policy" in policy for policy in bob_policy)
+    assert bob_result.result is not None
+    assert bob_result.result.version_hash() is not None
 
 
 def test_live_batch_authorize_detailed_lookup_by_id(
@@ -307,14 +349,17 @@ def test_live_batch_authorize_detailed_lookup_by_id(
     super_result = response.get_by_id("super-admin-any")
     assert super_result is not None
     assert super_result.is_allowed()  # super can do anything
-    assert super_result.policy_literal() is not None
-    assert super_result.version_hash() is not None
-    assert super_result.version_loaded_at() is not None
+    assert super_result.result is not None
+    assert super_result.result.policies
+    assert super_result.result is not None
+    assert super_result.result.version_hash() is not None
+    assert super_result.result.version_loaded_at() is not None
 
     bob_result = response.get_by_id("bob-create-detailed")
     assert bob_result is not None
     assert bob_result.is_denied()  # bob cannot create_host (user)
-    assert bob_result.policy_literal() is None  # Deny has no policy
+    assert bob_result.result is not None
+    assert bob_result.result.policies == []  # Deny has no policy
 
 
 def test_live_batch_authorize_iteration(

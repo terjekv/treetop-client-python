@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING**: Unified batch response types into `AuthorizeResponse` and result types into `AuthorizeResult`.
+- **BREAKING**: Replaced `AuthorizedResponseBrief` / `AuthorizedResponseDetailed` with a generic `AuthorizedResponse` plus `PermitPolicyBrief` / `PermitPolicyDetailed`.
+- **BREAKING**: Removed `policy_literal()` / `policy_json()` convenience methods; access policy data via `response.policies`.
+- **BREAKING**: `check()`/`check_detailed()` now return `AuthorizedResponse[PermitPolicyBrief|PermitPolicyDetailed]` rather than the old `AuthorizedResponseBrief`/`AuthorizedResponseDetailed`.
+- Added `policy_ids()` helper on `AuthorizedResponse` to return non-empty policy IDs.
+- Added response type aliases: `BriefDecision`, `DetailedDecision`, `BriefAuthorizeResponse`, `DetailedAuthorizeResponse`.
+
 ## [0.0.6] - 2026-01-30
 
 ### Added

@@ -44,7 +44,7 @@ def test_authorize_single_request_brief(httpx_mock: HTTPXMock):
                     "index": 0,
                     "id": "check-1",
                     "status": "success",
-                    "result": {"decision": "Allow"},
+                    "result": {"decision": "Allow", "policy_id": "policy.one; policy.two"},
                 }
             ],
             "version": {
@@ -65,6 +65,11 @@ def test_authorize_single_request_brief(httpx_mock: HTTPXMock):
     assert result.is_success()
     assert result.is_allowed()
     assert result.get_decision() == Decision.ALLOW
+    assert result.result is not None
+    assert [policy.id for policy in result.result.policies] == [
+        "policy.one",
+        "policy.two",
+    ]
 
 
 def test_authorize_multiple_requests_brief(httpx_mock: HTTPXMock):
@@ -132,7 +137,7 @@ def test_authorize_detailed(httpx_mock: HTTPXMock):
                         "decision": {
                             "Allow": {
                                 "policy": {
-                                    "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"42"\n);',
+                                    "literal": '@id("policy.alice")\npermit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"42"\n);',
                                     "json": {
                                         "action": {
                                             "entities": [
@@ -176,14 +181,17 @@ def test_authorize_detailed(httpx_mock: HTTPXMock):
     result = response[0]
     assert result.is_success()
     assert result.is_allowed()
-    assert result.policy_literal() is not None
-    policy_lit = result.policy_literal()
-    assert policy_lit is not None and 'principal == User::"alice"' in policy_lit
+    assert result.result is not None
+    assert result.result.policies
+    policy_lit = [policy.literal for policy in result.result.policies]
+    assert any('principal == User::"alice"' in policy for policy in policy_lit)
+    assert result.result is not None
+    assert result.result.policies[0].id == "policy.alice"
     assert (
-        result.version_hash()
+        result.result.version_hash()
         == "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219"
     )
-    assert result.version_loaded_at() is not None
+    assert result.result.version_loaded_at() is not None
 
 
 def test_authorize_deny(httpx_mock: HTTPXMock):
@@ -353,8 +361,8 @@ def test_check_detailed_backward_compatibility(httpx_mock: HTTPXMock):
     resp = client.check_detailed(make_req(id_suffix=None))
     assert resp.is_allowed()
     assert resp.decision == Decision.ALLOW
-    assert resp.policy is not None
-    assert "alice" in resp.policy.literal
+    assert resp.policies
+    assert any("alice" in policy.literal for policy in resp.policies)
     assert (
         resp.version_hash()
         == "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219"
@@ -565,12 +573,14 @@ def test_batch_authorize_detailed_lookup_by_index(httpx_mock: HTTPXMock):
     # Test lookup by index
     assert len(response) == 2
     assert response[0].is_allowed()
-    assert response[0].policy_literal() is not None
-    assert response[0].version_hash() == "hash1"
+    assert response[0].result is not None
+    assert response[0].result.policies
+    assert response[0].result.version_hash() == "hash1"
 
     assert response[1].is_denied()
-    assert response[1].policy_literal() is None
-    assert response[1].version_hash() == "hash2"
+    assert response[1].result is not None
+    assert response[1].result.policies == []
+    assert response[1].result.version_hash() == "hash2"
 
 
 def test_batch_authorize_detailed_lookup_by_id(httpx_mock: HTTPXMock):
@@ -655,14 +665,16 @@ def test_batch_authorize_detailed_lookup_by_id(httpx_mock: HTTPXMock):
     photo_result = response.get_by_id("photo-allow")
     assert photo_result is not None
     assert photo_result.is_allowed()
-    assert photo_result.policy_literal() is not None
-    assert photo_result.version_hash() == "hash1"
+    assert photo_result.result is not None
+    assert photo_result.result.policies
+    assert photo_result.result.version_hash() == "hash1"
 
     video_result = response.get_by_id("video-deny")
     assert video_result is not None
     assert video_result.is_denied()
-    assert video_result.policy_literal() is None
-    assert video_result.version_hash() == "hash2"
+    assert video_result.result is not None
+    assert video_result.result.policies == []
+    assert video_result.result.version_hash() == "hash2"
 
 
 def test_batch_authorize_mixed_success_and_failure(httpx_mock: HTTPXMock):

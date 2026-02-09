@@ -2,17 +2,24 @@ from __future__ import annotations
 
 import enum
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import Any, Generic, TypeVar, cast
 
 _COLON = re.compile(r":")
+_POLICY_ID = re.compile(r'@id\("([^"]+)"\)')
 
 
 def _no_colon(value: str, *, field_name: str) -> str:
     if _COLON.search(value):
         raise ValueError(f"{field_name} may not contain ':' - got {value!r}")
     return value
+
+
+def _policy_id_from_literal(literal: str) -> str | None:
+    match = _POLICY_ID.search(literal)
+    return match.group(1) if match else None
 
 
 class Endpoint(enum.Enum):
@@ -219,34 +226,50 @@ def as_api(obj: Request | dict[str, Any]) -> dict[str, Any]:
 
 
 @dataclass(slots=True, frozen=True)
-class AuthorizedResponseBrief:
-    decision: Decision
-
-    _KEYS: ClassVar[tuple[str, ...]] = ("decision",)
-
-    @classmethod
-    def from_api(cls, data: dict[str, Any]) -> AuthorizedResponseBrief:
-        # will KeyError if missing, or propagate other types
-        dec = data.get("decision", data.get("desicion"))
-        if dec is None:
-            raise KeyError("decision")
-        return cls(decision=Decision(dec))
-
-    def is_allowed(self) -> bool:
-        return self.decision == Decision.ALLOW
-
-    def is_denied(self) -> bool:
-        return self.decision == Decision.DENY
+class PermitPolicyBrief:
+    id: str
 
 
 @dataclass(slots=True, frozen=True)
-class PermitPolicy:
+class PermitPolicyDetailed:
+    id: str | None
     literal: str
     json: dict[str, Any]
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> PermitPolicy:
-        return cls(literal=data["literal"], json=data["json"])
+    def list_from_api(
+        cls, data: dict[str, Any] | list[dict[str, Any]]
+    ) -> list[PermitPolicyDetailed]:
+        if isinstance(data, list):
+            if not data:
+                raise ValueError("policy list is empty")
+            policies: list[PermitPolicyDetailed] = []
+            for item in data:
+                literal = item["literal"]
+                policy_id = (
+                    item.get("annotation_id")
+                    or item.get("cedar_id")
+                    or item.get("id")
+                    or _policy_id_from_literal(literal)
+                )
+                policies.append(
+                    cls(
+                        id=policy_id,
+                        literal=literal,
+                        json=item["json"],
+                    )
+                )
+            return policies
+        if not isinstance(data, dict):
+            raise TypeError(f"policy must be dict or list, got {type(data)!r}")
+        literal = data["literal"]
+        policy_id = (
+            data.get("annotation_id")
+            or data.get("cedar_id")
+            or data.get("id")
+            or _policy_id_from_literal(literal)
+        )
+        return [cls(id=policy_id, literal=literal, json=data["json"])]
 
 
 @dataclass(slots=True, frozen=True)
@@ -262,15 +285,62 @@ class PolicyVersion:
         )
 
 
+PolicyT = TypeVar(
+    "PolicyT",
+    bound="PermitPolicyBrief | PermitPolicyDetailed",
+    covariant=True,
+)
+
+
 @dataclass(slots=True, frozen=True)
-class AuthorizedResponseDetailed:
-    # Either decision == Decision.DENY or Decision.ALLOW with PermitPolicy
+class AuthorizedResponse(Generic[PolicyT]):
     decision: Decision
-    policy: PermitPolicy | None
+    policies: Sequence[PolicyT] = field(default_factory=list)
     version: PolicyVersion | None = None
 
-    @classmethod
-    def from_api(cls, data: dict[str, Any]) -> AuthorizedResponseDetailed:
+    @staticmethod
+    def from_api_brief(
+        data: dict[str, Any]
+    ) -> AuthorizedResponse[PermitPolicyBrief]:
+        dec = data.get("decision", data.get("desicion"))
+        if dec is None:
+            raise KeyError("decision")
+        if isinstance(dec, dict):
+            if Decision.ALLOW.value in dec:
+                dec = Decision.ALLOW.value
+            elif Decision.DENY.value in dec:
+                dec = Decision.DENY.value
+            else:
+                raise ValueError(f"Unrecognized decision shape: {dec!r}")
+        decision = Decision(dec)
+
+        raw_policy_ids = data.get("policy_id")
+        if isinstance(raw_policy_ids, str):
+            policy_ids = [p.strip() for p in raw_policy_ids.split(";") if p.strip()]
+        elif raw_policy_ids is None:
+            policy_ids = []
+        elif isinstance(raw_policy_ids, list):
+            # Check that all items in the list are strings
+            if not all(isinstance(p, str) for p in raw_policy_ids):
+                raise TypeError(
+                    f"All items in policy_id list must be strings, got {raw_policy_ids!r}"
+                )
+            policy_ids = [str(p) for p in raw_policy_ids]
+        else:
+            raise TypeError(
+                f"policy_id must be string if present, got {type(raw_policy_ids)!r}"
+            )
+        policies = [PermitPolicyBrief(id=policy_id) for policy_id in policy_ids]
+        version_blob = data.get("version")
+        version = PolicyVersion.from_api(version_blob) if version_blob else None
+        return AuthorizedResponse(
+            decision=decision, policies=policies, version=version
+        )
+
+    @staticmethod
+    def from_api_detailed(
+        data: dict[str, Any]
+    ) -> AuthorizedResponse[PermitPolicyDetailed]:
         dec = data.get("decision", data.get("desicion"))  # Temporary typo support
         if dec is None:
             raise KeyError("decision")
@@ -279,7 +349,9 @@ class AuthorizedResponseDetailed:
         if dec == Decision.DENY.value:
             version_blob = data.get("version")
             version = PolicyVersion.from_api(version_blob) if version_blob else None
-            return cls(decision=Decision.DENY, policy=None, version=version)
+            return AuthorizedResponse(
+                decision=Decision.DENY, policies=[], version=version
+            )
 
         # 1b) Is it a simple Allow with top-level policy/version?
         if dec == Decision.ALLOW.value:
@@ -288,9 +360,9 @@ class AuthorizedResponseDetailed:
             policy_blob = data["policy"]
             version_blob = data.get("version")
             version = PolicyVersion.from_api(version_blob) if version_blob else None
-            return cls(
+            return AuthorizedResponse(
                 decision=Decision.ALLOW,
-                policy=PermitPolicy.from_api(policy_blob),
+                policies=PermitPolicyDetailed.list_from_api(policy_blob),
                 version=version,
             )
 
@@ -299,9 +371,9 @@ class AuthorizedResponseDetailed:
             deny_dict = cast(dict[str, Any], dec[Decision.DENY.value])
             version_blob = deny_dict.get("version")
             version = PolicyVersion.from_api(version_blob) if version_blob else None
-            return cls(
+            return AuthorizedResponse(
                 decision=Decision.DENY,
-                policy=None,
+                policies=[],
                 version=version,
             )
 
@@ -318,9 +390,9 @@ class AuthorizedResponseDetailed:
             policy_blob = allow_dict["policy"]
             version_blob = allow_dict.get("version")
             version = PolicyVersion.from_api(version_blob) if version_blob else None
-            return cls(
+            return AuthorizedResponse(
                 decision=Decision.ALLOW,
-                policy=PermitPolicy.from_api(policy_blob),
+                policies=PermitPolicyDetailed.list_from_api(policy_blob),
                 version=version,
             )
 
@@ -333,13 +405,8 @@ class AuthorizedResponseDetailed:
     def is_denied(self) -> bool:
         return self.decision == Decision.DENY
 
-    def policy_literal(self) -> str | None:
-        """Return the policy literal if available, otherwise None."""
-        return self.policy.literal if self.policy else None
-
-    def policy_json(self) -> dict[str, Any] | None:
-        """Return the policy JSON if available, otherwise None."""
-        return self.policy.json if self.policy else None
+    def policy_ids(self) -> list[str]:
+        return [policy.id for policy in self.policies if policy.id]
 
     def version_hash(self) -> str | None:
         """Return the policy version hash if available, otherwise None."""
@@ -351,20 +418,17 @@ class AuthorizedResponseDetailed:
 
 
 # Generic type variables for authorization results and responses
-ResultT = TypeVar(
-    "ResultT", bound="AuthorizedResponseBrief | AuthorizedResponseDetailed"
-)
-T = TypeVar("T", bound="AuthorizeResultBrief | AuthorizeResultDetailed")
+DecisionT = TypeVar("DecisionT", bound=AuthorizedResponse[Any], covariant=True)
 
 
 @dataclass(slots=True, frozen=True)
-class AuthorizeResultBase(Generic[ResultT]):
-    """Base class for a single result from the authorize endpoint."""
+class AuthorizeResult(Generic[DecisionT]):
+    """A single result from the authorize endpoint."""
 
     index: int
     id: str | None
     status: str
-    result: ResultT | None = None
+    result: DecisionT | None = None
     error: str | None = None
 
     def is_success(self) -> bool:
@@ -388,12 +452,10 @@ class AuthorizeResultBase(Generic[ResultT]):
         return self.result.is_denied() if self.result else False
 
 
-@dataclass(slots=True, frozen=True)
-class AuthorizeResultBrief(AuthorizeResultBase[AuthorizedResponseBrief]):
-    """A single result from the authorize endpoint (brief detail level)."""
-
-    @classmethod
-    def from_api(cls, data: dict[str, Any]) -> AuthorizeResultBrief:
+    @staticmethod
+    def from_api_brief(
+        data: dict[str, Any]
+    ) -> AuthorizeResult[AuthorizedResponse[PermitPolicyBrief]]:
         index = data["index"]
         result_id = data.get("id")
         status = data["status"]
@@ -401,17 +463,16 @@ class AuthorizeResultBrief(AuthorizeResultBase[AuthorizedResponseBrief]):
 
         result = None
         if status == "success" and "result" in data:
-            result = AuthorizedResponseBrief.from_api(data["result"])
+            result = AuthorizedResponse.from_api_brief(data["result"])
 
-        return cls(index=index, id=result_id, status=status, result=result, error=error)
+        return AuthorizeResult(
+            index=index, id=result_id, status=status, result=result, error=error
+        )
 
-
-@dataclass(slots=True, frozen=True)
-class AuthorizeResultDetailed(AuthorizeResultBase[AuthorizedResponseDetailed]):
-    """A single result from the authorize endpoint (detailed level)."""
-
-    @classmethod
-    def from_api(cls, data: dict[str, Any]) -> AuthorizeResultDetailed:
+    @staticmethod
+    def from_api_detailed(
+        data: dict[str, Any]
+    ) -> AuthorizeResult[AuthorizedResponse[PermitPolicyDetailed]]:
         index = data["index"]
         result_id = data.get("id")
         status = data["status"]
@@ -419,39 +480,25 @@ class AuthorizeResultDetailed(AuthorizeResultBase[AuthorizedResponseDetailed]):
 
         result = None
         if status == "success" and "result" in data:
-            result = AuthorizedResponseDetailed.from_api(data["result"])
+            result = AuthorizedResponse.from_api_detailed(data["result"])
 
-        return cls(index=index, id=result_id, status=status, result=result, error=error)
-
-    def policy_literal(self) -> str | None:
-        """Return the policy literal if available, otherwise None."""
-        return self.result.policy_literal() if self.result else None
-
-    def policy_json(self) -> dict[str, Any] | None:
-        """Return the policy JSON if available, otherwise None."""
-        return self.result.policy_json() if self.result else None
-
-    def version_hash(self) -> str | None:
-        """Return the policy version hash if available, otherwise None."""
-        return self.result.version_hash() if self.result else None
-
-    def version_loaded_at(self) -> datetime | None:
-        """Return the policy version loaded_at timestamp if available, otherwise None."""
-        return self.result.version_loaded_at() if self.result else None
+        return AuthorizeResult(
+            index=index, id=result_id, status=status, result=result, error=error
+        )
 
 
-# Generic type variables for authorization results and responses
-ResultT = TypeVar(
-    "ResultT", bound="AuthorizedResponseBrief | AuthorizedResponseDetailed"
+AuthorizeResultT = TypeVar(
+    "AuthorizeResultT",
+    bound=AuthorizeResult[AuthorizedResponse[Any]],
+    covariant=True,
 )
-T = TypeVar("T", bound="AuthorizeResultBrief | AuthorizeResultDetailed")
 
 
 @dataclass(slots=True, frozen=True)
-class AuthorizeResponseBase(Generic[T]):
-    """Base class for batch responses from the authorize endpoint."""
+class AuthorizeResponse(Generic[AuthorizeResultT]):
+    """Batch response from the authorize endpoint."""
 
-    results: list[T]
+    results: Sequence[AuthorizeResultT]
     version: PolicyVersion
     successful: int
     failed: int
@@ -464,11 +511,11 @@ class AuthorizeResponseBase(Generic[T]):
         """Return the number of results."""
         return len(self.results)
 
-    def __getitem__(self, index: int) -> T:
+    def __getitem__(self, index: int) -> AuthorizeResultT:
         """Get result by index."""
         return self.results[index]
 
-    def get_by_id(self, request_id: str) -> T | None:
+    def get_by_id(self, request_id: str) -> AuthorizeResultT | None:
         """Get result by client-provided request ID."""
         for result in self.results:
             if result.id == request_id:
@@ -487,34 +534,37 @@ class AuthorizeResponseBase(Generic[T]):
         """Check if all successful results are allowed."""
         return all(r.is_allowed() for r in self.results if r.is_success())
 
-
-@dataclass(slots=True, frozen=True)
-class AuthorizeResponseBrief(AuthorizeResponseBase[AuthorizeResultBrief]):
-    """Batch response from the authorize endpoint (brief detail level)."""
-
-    @classmethod
-    def from_api(cls, data: dict[str, Any]) -> AuthorizeResponseBrief:
-        results = [AuthorizeResultBrief.from_api(r) for r in data.get("results", [])]
+    @staticmethod
+    def from_api_brief(
+        data: dict[str, Any]
+    ) -> AuthorizeResponse[AuthorizeResult[AuthorizedResponse[PermitPolicyBrief]]]:
+        results = [AuthorizeResult.from_api_brief(r) for r in data.get("results", [])]
         version = PolicyVersion.from_api(data["version"])
         successful = data.get("successful", 0)
         failed = data.get("failed", 0)
 
-        return cls(
+        return AuthorizeResponse(
             results=results, version=version, successful=successful, failed=failed
         )
-
-
-@dataclass(slots=True, frozen=True)
-class AuthorizeResponseDetailed(AuthorizeResponseBase[AuthorizeResultDetailed]):
-    """Batch response from the authorize endpoint (detailed level)."""
-
-    @classmethod
-    def from_api(cls, data: dict[str, Any]) -> AuthorizeResponseDetailed:
-        results = [AuthorizeResultDetailed.from_api(r) for r in data.get("results", [])]
+    @staticmethod
+    def from_api_detailed(
+        data: dict[str, Any]
+    ) -> AuthorizeResponse[AuthorizeResult[AuthorizedResponse[PermitPolicyDetailed]]]:
+        results = [
+            AuthorizeResult.from_api_detailed(r) for r in data.get("results", [])
+        ]
         version = PolicyVersion.from_api(data["version"])
         successful = data.get("successful", 0)
         failed = data.get("failed", 0)
 
-        return cls(
+        return AuthorizeResponse(
             results=results, version=version, successful=successful, failed=failed
         )
+
+
+BriefDecision = AuthorizedResponse[PermitPolicyBrief]
+DetailedDecision = AuthorizedResponse[PermitPolicyDetailed]
+BriefAuthorizeResult = AuthorizeResult[BriefDecision]
+DetailedAuthorizeResult = AuthorizeResult[DetailedDecision]
+BriefAuthorizeResponse = AuthorizeResponse[BriefAuthorizeResult]
+DetailedAuthorizeResponse = AuthorizeResponse[DetailedAuthorizeResult]
