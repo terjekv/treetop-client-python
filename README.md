@@ -7,7 +7,7 @@ Python ≥ 3.12, zero runtime deps beyond HTTPX.
 
 - **Unified Batch Authorization Endpoint**: Process multiple authorization requests in a single API call
 - **Detail Levels**: Control response verbosity (brief vs. detailed with policy information)
-- **Backward Compatible**: Existing code using `check()` and `check_detailed()` continues to work seamlessly
+- **Typed Responses**: Unified response types with explicit brief/detailed policy models
 - **Full Async Support**: Async/await support for all API methods
 - **Type Safe**: Fully type-hinted dataclasses for requests and responses
 - **Version Tracking**: Access policy version information (hash and loaded_at timestamp)
@@ -124,8 +124,9 @@ assert resp.is_allowed()
 assert resp.decision == Decision.ALLOW
 
 # Access policy information (if allowed)
-assert resp.policy_literal() is not None  # Cedar format
-assert resp.policy_json() is not None     # JSON format
+assert resp.policies
+literals = [policy.literal for policy in resp.policies]  # Cedar format
+json_policies = [policy.json for policy in resp.policies]  # JSON format
 
 # Access version information
 hash = resp.version_hash()           # SHA-256 hash or None
@@ -146,8 +147,9 @@ response = client.authorize_detailed(requests)
 for result in response:
     if result.is_success() and result.is_allowed():
         print(f"Decision: {result.get_decision()}")
-        print(f"Policy: {result.policy_literal()}")
-        print(f"Version hash: {result.version_hash()}")
+        policies = result.result.policies if result.result else []
+        print(f"Policy literals: {[p.literal for p in policies]}")
+        print(f"Version hash: {result.result.version_hash() if result.result else None}")
 ```
 
 ## Async API

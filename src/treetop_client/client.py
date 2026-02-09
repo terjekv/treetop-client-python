@@ -6,11 +6,9 @@ from typing import Any, Final
 
 import httpx
 
-from treetop_client.models import (AuthorizedResponseBrief,
-                                   AuthorizedResponseDetailed,
-                                   AuthorizeResponseBrief,
-                                   AuthorizeResponseDetailed, Decision,
-                                   Endpoint, Request, as_api)
+from treetop_client.models import (BriefAuthorizeResponse, BriefDecision,
+                                   DetailedAuthorizeResponse, DetailedDecision,
+                                   Decision, Endpoint, Request, as_api)
 
 _DEFAULT_LIMITS: Final = httpx.Limits(
     max_connections=100,
@@ -90,14 +88,14 @@ class TreeTopClient(metaclass=_Singleton):
         self,
         requests: Request | dict[str, Any] | Sequence[Request | dict[str, Any]],
         correlation_id: str | None = None,
-    ) -> AuthorizeResponseBrief:
+    ) -> BriefAuthorizeResponse:
         """Authorize one or more requests (brief detail level). Synchronous version.
 
         Args:
             requests: A single request or list of requests. Can be Request objects or dictionaries.
             correlation_id: Optional correlation ID for tracing the request.
         Returns:
-            An AuthorizeResponseBrief containing the batch results.
+            A BriefAuthorizeResponse containing the batch results.
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
@@ -112,20 +110,20 @@ class TreeTopClient(metaclass=_Singleton):
             correlation_id=correlation_id,
         )
         resp.raise_for_status()
-        return AuthorizeResponseBrief.from_api(resp.json())
+        return BriefAuthorizeResponse.from_api_brief(resp.json())
 
     def authorize_detailed(
         self,
         requests: Request | dict[str, Any] | Sequence[Request | dict[str, Any]],
         correlation_id: str | None = None,
-    ) -> AuthorizeResponseDetailed:
+    ) -> DetailedAuthorizeResponse:
         """Authorize one or more requests (detailed with policy info). Synchronous version.
 
         Args:
             requests: A single request or list of requests. Can be Request objects or dictionaries.
             correlation_id: Optional correlation ID for tracing the request.
         Returns:
-            An AuthorizeResponseDetailed containing the batch results with policy info.
+            A DetailedAuthorizeResponse containing the batch results with policy info.
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
@@ -141,20 +139,20 @@ class TreeTopClient(metaclass=_Singleton):
             params={"detail": "full"},
         )
         resp.raise_for_status()
-        return AuthorizeResponseDetailed.from_api(resp.json())
+        return DetailedAuthorizeResponse.from_api_detailed(resp.json())
 
     async def aauthorize(
         self,
         requests: Request | dict[str, Any] | Sequence[Request | dict[str, Any]],
         correlation_id: str | None = None,
-    ) -> AuthorizeResponseBrief:
+    ) -> BriefAuthorizeResponse:
         """Authorize one or more requests (brief detail level). Asynchronous version.
 
         Args:
             requests: A single request or list of requests. Can be Request objects or dictionaries.
             correlation_id: Optional correlation ID for tracing the request.
         Returns:
-            An AuthorizeResponseBrief containing the batch results.
+            A BriefAuthorizeResponse containing the batch results.
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
@@ -169,20 +167,20 @@ class TreeTopClient(metaclass=_Singleton):
             correlation_id=correlation_id,
         )
         resp.raise_for_status()
-        return AuthorizeResponseBrief.from_api(resp.json())
+        return BriefAuthorizeResponse.from_api_brief(resp.json())
 
     async def aauthorize_detailed(
         self,
         requests: Request | dict[str, Any] | Sequence[Request | dict[str, Any]],
         correlation_id: str | None = None,
-    ) -> AuthorizeResponseDetailed:
+    ) -> DetailedAuthorizeResponse:
         """Authorize one or more requests (detailed with policy info). Asynchronous version.
 
         Args:
             requests: A single request or list of requests. Can be Request objects or dictionaries.
             correlation_id: Optional correlation ID for tracing the request.
         Returns:
-            An AuthorizeResponseDetailed containing the batch results with policy info.
+            A DetailedAuthorizeResponse containing the batch results with policy info.
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
@@ -198,12 +196,12 @@ class TreeTopClient(metaclass=_Singleton):
             params={"detail": "full"},
         )
         resp.raise_for_status()
-        return AuthorizeResponseDetailed.from_api(resp.json())
+        return DetailedAuthorizeResponse.from_api_detailed(resp.json())
 
     # Compatibility methods for single-request API (wraps batch API)
     def check(
         self, request: Request | dict[str, Any], correlation_id: str | None = None
-    ) -> AuthorizedResponseBrief:
+    ) -> BriefDecision:
         """Check the given request. Synchronous version (compatibility wrapper).
 
         This method provides backward compatibility with the old single-request API.
@@ -213,7 +211,7 @@ class TreeTopClient(metaclass=_Singleton):
             request: The request to check, either as a Request object or a dictionary.
             correlation_id: Optional correlation ID for tracing the request.
         Returns:
-            An AuthorizedResponseBrief containing the result of the check.
+            A BriefDecision containing the result of the check.
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
@@ -223,11 +221,11 @@ class TreeTopClient(metaclass=_Singleton):
         result = response.results[0]
         if result.status == "failed":
             raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseBrief(Decision.DENY)
+        return result.result or BriefDecision(Decision.DENY)
 
     def check_detailed(
         self, request: Request | dict[str, Any], correlation_id: str | None = None
-    ) -> AuthorizedResponseDetailed:
+    ) -> DetailedDecision:
         """Check the given request with detailed output. Synchronous version (compatibility wrapper).
 
         This method provides backward compatibility with the old single-request API.
@@ -237,7 +235,7 @@ class TreeTopClient(metaclass=_Singleton):
             request: The request to check, either as a Request object or a dictionary.
             correlation_id: Optional correlation ID for tracing the request.
         Returns:
-            An AuthorizedResponseDetailed containing the detailed result of the check.
+            A DetailedDecision containing the detailed result of the check.
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
@@ -247,11 +245,11 @@ class TreeTopClient(metaclass=_Singleton):
         result = response.results[0]
         if result.status == "failed":
             raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseDetailed(Decision.DENY, None, None)
+        return result.result or DetailedDecision(Decision.DENY)
 
     async def acheck(
         self, request: Request | dict[str, Any], correlation_id: str | None = None
-    ) -> AuthorizedResponseBrief:
+    ) -> BriefDecision:
         """Check the given request. Asynchronous version (compatibility wrapper).
 
         This method provides backward compatibility with the old single-request API.
@@ -261,7 +259,7 @@ class TreeTopClient(metaclass=_Singleton):
             request: The request to check, either as a Request object or a dictionary.
             correlation_id: Optional correlation ID for tracing the request.
         Returns:
-            An AuthorizedResponseBrief containing the result of the check.
+            A BriefDecision containing the result of the check.
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
@@ -271,11 +269,11 @@ class TreeTopClient(metaclass=_Singleton):
         result = response.results[0]
         if result.status == "failed":
             raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseBrief(Decision.DENY)
+        return result.result or BriefDecision(Decision.DENY)
 
     async def acheck_detailed(
         self, request: Request | dict[str, Any], correlation_id: str | None = None
-    ) -> AuthorizedResponseDetailed:
+    ) -> DetailedDecision:
         """Check the given request with detailed output. Asynchronous version (compatibility wrapper).
 
         This method provides backward compatibility with the old single-request API.
@@ -285,7 +283,7 @@ class TreeTopClient(metaclass=_Singleton):
             request: The request to check, either as a Request object or a dictionary.
             correlation_id: Optional correlation ID for tracing the request.
         Returns:
-            An AuthorizedResponseDetailed containing the detailed result of the check.
+            A DetailedDecision containing the detailed result of the check.
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
@@ -297,7 +295,7 @@ class TreeTopClient(metaclass=_Singleton):
         result = response.results[0]
         if result.status == "failed":
             raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseDetailed(Decision.DENY, None, None)
+        return result.result or DetailedDecision(Decision.DENY)
 
     def close(self):
         """Close the synchronous client connection."""

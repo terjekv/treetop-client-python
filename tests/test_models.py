@@ -2,7 +2,10 @@ import pytest
 
 from treetop_client.models import (
     Action,
+    AuthorizedResponse,
+    Decision,
     Group,
+    PermitPolicyDetailed,
     QualifiedId,
     Request,
     Resource,
@@ -95,3 +98,70 @@ def test_group_new():
 def test_action_new():
     a = Action.new(id="edit", namespace=["App"])
     assert a.to_api() == {"id": "edit", "namespace": ["App"]}
+
+
+def test_authorized_response_detailed_multiple_policies():
+    data = {
+        "decision": {
+            "Allow": {
+                "policy": [
+                    {
+                        "literal": '@id("policy.alice")\npermit (principal == User::"alice", action, resource);',
+                        "json": {"effect": "permit"},
+                    },
+                    {
+                        "literal": '@id("policy.bob")\npermit (principal == User::"bob", action, resource);',
+                        "json": {"effect": "permit"},
+                    },
+                ]
+            }
+        }
+    }
+    resp = AuthorizedResponse.from_api_detailed(data)
+    assert resp.is_allowed()
+    assert resp.policies
+    assert [policy.literal for policy in resp.policies] == [
+        '@id("policy.alice")\npermit (principal == User::"alice", action, resource);',
+        '@id("policy.bob")\npermit (principal == User::"bob", action, resource);',
+    ]
+    assert [policy.json for policy in resp.policies] == [
+        {"effect": "permit"},
+        {"effect": "permit"},
+    ]
+    assert [policy.id for policy in resp.policies] == ["policy.alice", "policy.bob"]
+
+
+def test_permit_policy_empty_list_rejected():
+    with pytest.raises(ValueError):
+        PermitPolicyDetailed.list_from_api([])
+
+
+def test_permit_policy_id_from_literal():
+    data = {
+        "literal": '@id("policy.literal_only")\npermit (principal, action, resource);',
+        "json": {"effect": "permit"},
+    }
+    policies = PermitPolicyDetailed.list_from_api(data)
+    assert len(policies) == 1
+    assert policies[0].id == "policy.literal_only"
+
+
+def test_authorized_response_detailed_deny_has_no_policy():
+    data = {"decision": Decision.DENY.value}
+    resp = AuthorizedResponse.from_api_detailed(data)
+    assert resp.is_denied()
+    assert resp.policies == []
+
+
+def test_authorized_response_brief_policy_ids_parsing():
+    data = {"decision": Decision.ALLOW.value, "policy_id": "a;b ; c;;"}
+    resp = AuthorizedResponse.from_api_brief(data)
+    assert resp.is_allowed()
+    assert resp.policy_ids() == ["a", "b", "c"]
+
+
+def test_authorized_response_brief_policy_ids_missing():
+    data = {"decision": Decision.DENY.value}
+    resp = AuthorizedResponse.from_api_brief(data)
+    assert resp.is_denied()
+    assert resp.policy_ids() == []
