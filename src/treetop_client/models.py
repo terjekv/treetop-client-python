@@ -271,7 +271,7 @@ class AuthorizedResponseDetailed:
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> AuthorizedResponseDetailed:
-        dec = data.get("decision", data.get("desicion")) # Temporary typo support
+        dec = data.get("decision", data.get("desicion"))  # Temporary typo support
         if dec is None:
             raise KeyError("decision")
 
@@ -351,8 +351,10 @@ class AuthorizedResponseDetailed:
 
 
 # Generic type variables for authorization results and responses
-ResultT = TypeVar('ResultT', bound='AuthorizedResponseBrief | AuthorizedResponseDetailed')
-T = TypeVar('T', bound='AuthorizeResultBrief | AuthorizeResultDetailed')
+ResultT = TypeVar(
+    "ResultT", bound="AuthorizedResponseBrief | AuthorizedResponseDetailed"
+)
+T = TypeVar("T", bound="AuthorizeResultBrief | AuthorizeResultDetailed")
 
 
 @dataclass(slots=True, frozen=True)
@@ -439,8 +441,10 @@ class AuthorizeResultDetailed(AuthorizeResultBase[AuthorizedResponseDetailed]):
 
 
 # Generic type variables for authorization results and responses
-ResultT = TypeVar('ResultT', bound='AuthorizedResponseBrief | AuthorizedResponseDetailed')
-T = TypeVar('T', bound='AuthorizeResultBrief | AuthorizeResultDetailed')
+ResultT = TypeVar(
+    "ResultT", bound="AuthorizedResponseBrief | AuthorizedResponseDetailed"
+)
+T = TypeVar("T", bound="AuthorizeResultBrief | AuthorizeResultDetailed")
 
 
 @dataclass(slots=True, frozen=True)
