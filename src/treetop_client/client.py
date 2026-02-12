@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Sequence
-from typing import Final, cast, override
+from typing import Final, cast
 
 import httpx
 
@@ -26,24 +26,7 @@ _DEFAULT_LIMITS: Final = httpx.Limits(
 )
 
 
-class _Singleton(type):
-    _instance: TreeTopClient | None = None
-
-    @override
-    def __call__(cls, *args: object, **kwargs: object) -> TreeTopClient:
-        """Ensure that only one instance of TreeTopClient exists."""
-        instance: TreeTopClient | None = cls._instance
-        if instance is None:
-            instance = cast(TreeTopClient, super().__call__(*args, **kwargs))
-            cls._instance = instance
-        return instance
-
-    def clear_instance(cls) -> None:
-        """Reset the cached singleton instance."""
-        cls._instance = None
-
-
-class TreeTopClient(metaclass=_Singleton):
+class TreeTopClient:
     def __init__(
         self,
         base_url: str = "http://localhost:9999",
@@ -322,13 +305,11 @@ class TreeTopClient(metaclass=_Singleton):
         """Close the synchronous client connection."""
         with contextlib.suppress(Exception):
             self._sync_client.close()
-        type(self).clear_instance()
 
     async def aclose(self):
         """Close the asynchronous client connection."""
         await self._async_client.aclose()
         self._sync_client.close()
-        type(self).clear_instance()
 
 
 # For typing convenience
