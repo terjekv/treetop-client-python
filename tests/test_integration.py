@@ -687,12 +687,12 @@ def test_live_batch_large_query_ordering_and_performance(
     
     # Performance reporting
     requests_per_second = num_requests / elapsed_time
-    print(f"\n==== Batch Authorization Performance ====")
+    print("\n==== Batch Authorization Performance ====")
     print(f"Total requests  : {num_requests}")
     print(f"Total time      : {elapsed_time:.3f} seconds")
     print(f"Throughput      : {requests_per_second:.1f} requests/second")
     print(f"Per-request time: {(elapsed_time / num_requests) * 1000:.1f} ms")
-    print(f"=========================================\n")
+    print("=========================================\n")
     
     # Performance expectations (may vary by system)
     # Should handle 60 requests in < 0.5 seconds realistically
