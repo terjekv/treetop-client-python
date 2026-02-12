@@ -124,8 +124,13 @@ assert resp.is_allowed()
 assert resp.decision == Decision.ALLOW
 
 # Access policy information (if allowed)
-assert resp.policy_literal() is not None  # Cedar format
-assert resp.policy_json() is not None     # JSON format
+# The server returns all matching policies as PermitPolicy objects
+policies = list(resp)  # or resp.policies
+if policies:
+    print(f"First matching policy: {policies[0].literal}")
+    print(f"Total matching policies: {len(policies)}")
+    print(f"Annotation IDs: {[p.annotation_id for p in policies if p.annotation_id]}")
+    print(f"Cedar IDs: {[p.cedar_id for p in policies if p.cedar_id]}")
 
 # Access version information
 hash = resp.version_hash()           # SHA-256 hash or None
@@ -146,7 +151,13 @@ response = client.authorize_detailed(requests)
 for result in response:
     if result.is_success() and result.is_allowed():
         print(f"Decision: {result.get_decision()}")
-        print(f"Policy: {result.policy_literal()}")
+        
+        # Access all matching policies for this result
+        policies = result.policies
+        if policies:
+            print(f"First matching policy: {policies[0].literal}")
+            print(f"Total matching policies: {len(policies)}")
+        
         print(f"Version hash: {result.version_hash()}")
 ```
 

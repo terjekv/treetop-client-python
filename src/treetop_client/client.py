@@ -247,7 +247,7 @@ class TreeTopClient(metaclass=_Singleton):
         result = response.results[0]
         if result.status == "failed":
             raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseDetailed(Decision.DENY, None, None)
+        return result.result or AuthorizedResponseDetailed(Decision.DENY, [], None)
 
     async def acheck(
         self, request: Request | dict[str, Any], correlation_id: str | None = None
@@ -297,7 +297,7 @@ class TreeTopClient(metaclass=_Singleton):
         result = response.results[0]
         if result.status == "failed":
             raise RuntimeError(f"Authorization failed: {result.error}")
-        return result.result or AuthorizedResponseDetailed(Decision.DENY, None, None)
+        return result.result or AuthorizedResponseDetailed(Decision.DENY, [], None)
 
     def close(self):
         """Close the synchronous client connection."""

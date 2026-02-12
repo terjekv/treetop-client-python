@@ -5,8 +5,15 @@ import pytest
 from pytest_httpx import HTTPXMock
 
 from treetop_client.client import TreeTopClient
-from treetop_client.models import (Action, Decision, QualifiedId, Request,
-                                   Resource, ResourceAttribute, User)
+from treetop_client.models import (
+    Action,
+    Decision,
+    QualifiedId,
+    Request,
+    Resource,
+    ResourceAttribute,
+    User,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -131,27 +138,32 @@ def test_authorize_detailed(httpx_mock: HTTPXMock):
                     "result": {
                         "decision": {
                             "Allow": {
-                                "policy": {
-                                    "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"42"\n);',
-                                    "json": {
-                                        "action": {
-                                            "entities": [
-                                                {"id": "view", "type": "Action"}
-                                            ],
-                                            "op": "in",
+                                "policy": [
+                                    {
+                                        "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"42"\n);',
+                                        "json": {
+                                            "action": {
+                                                "entities": [
+                                                    {"id": "view", "type": "Action"}
+                                                ],
+                                                "op": "in",
+                                            },
+                                            "conditions": [],
+                                            "effect": "permit",
+                                            "principal": {
+                                                "entity": {
+                                                    "id": "alice",
+                                                    "type": "User",
+                                                },
+                                                "op": "==",
+                                            },
+                                            "resource": {
+                                                "entity": {"id": "42", "type": "Photo"},
+                                                "op": "==",
+                                            },
                                         },
-                                        "conditions": [],
-                                        "effect": "permit",
-                                        "principal": {
-                                            "entity": {"id": "alice", "type": "User"},
-                                            "op": "==",
-                                        },
-                                        "resource": {
-                                            "entity": {"id": "42", "type": "Photo"},
-                                            "op": "==",
-                                        },
-                                    },
-                                },
+                                    }
+                                ],
                                 "version": {
                                     "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
                                     "loaded_at": "2025-12-19T15:25:55.384783000Z",
@@ -176,9 +188,9 @@ def test_authorize_detailed(httpx_mock: HTTPXMock):
     result = response[0]
     assert result.is_success()
     assert result.is_allowed()
-    assert result.policy_literal() is not None
-    policy_lit = result.policy_literal()
-    assert policy_lit is not None and 'principal == User::"alice"' in policy_lit
+    policies = list(result)
+    assert len(policies) > 0
+    assert 'principal == User::"alice"' in policies[0].literal
     assert (
         result.version_hash()
         == "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219"
@@ -310,27 +322,32 @@ def test_check_detailed_backward_compatibility(httpx_mock: HTTPXMock):
                     "result": {
                         "decision": {
                             "Allow": {
-                                "policy": {
-                                    "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"42"\n);',
-                                    "json": {
-                                        "effect": "permit",
-                                        "principal": {
-                                            "entity": {"id": "alice", "type": "User"},
-                                            "op": "==",
+                                "policy": [
+                                    {
+                                        "literal": 'permit (\n    principal == User::"alice",\n    action in [Action::"view"],\n    resource == Photo::"42"\n);',
+                                        "json": {
+                                            "effect": "permit",
+                                            "principal": {
+                                                "entity": {
+                                                    "id": "alice",
+                                                    "type": "User",
+                                                },
+                                                "op": "==",
+                                            },
+                                            "action": {
+                                                "entities": [
+                                                    {"id": "view", "type": "Action"}
+                                                ],
+                                                "op": "in",
+                                            },
+                                            "resource": {
+                                                "entity": {"id": "42", "type": "Photo"},
+                                                "op": "==",
+                                            },
+                                            "conditions": [],
                                         },
-                                        "action": {
-                                            "entities": [
-                                                {"id": "view", "type": "Action"}
-                                            ],
-                                            "op": "in",
-                                        },
-                                        "resource": {
-                                            "entity": {"id": "42", "type": "Photo"},
-                                            "op": "==",
-                                        },
-                                        "conditions": [],
-                                    },
-                                },
+                                    }
+                                ],
                                 "version": {
                                     "hash": "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219",
                                     "loaded_at": "2025-12-16T15:25:55.384783000Z",
@@ -353,8 +370,10 @@ def test_check_detailed_backward_compatibility(httpx_mock: HTTPXMock):
     resp = client.check_detailed(make_req(id_suffix=None))
     assert resp.is_allowed()
     assert resp.decision == Decision.ALLOW
-    assert resp.policy is not None
-    assert "alice" in resp.policy.literal
+    assert len(resp.policies) > 0
+    policies = resp.policies
+    assert len(policies) > 0
+    assert "alice" in policies[0].literal
     assert (
         resp.version_hash()
         == "c82d116854d77bf689c3d15e167764876dffe869c970bc08ab7c5dacd7726219"
@@ -519,12 +538,14 @@ def test_batch_authorize_detailed_lookup_by_index(httpx_mock: HTTPXMock):
                     "result": {
                         "decision": {
                             "Allow": {
-                                "policy": {
-                                    "literal": "permit (...);",
-                                    "json": {
-                                        "effect": "permit",
-                                    },
-                                },
+                                "policy": [
+                                    {
+                                        "literal": "permit (...);",
+                                        "json": {
+                                            "effect": "permit",
+                                        },
+                                    }
+                                ],
                                 "version": {
                                     "hash": "hash1",
                                     "loaded_at": "2025-12-19T00:14:38.577289000Z",
@@ -565,11 +586,12 @@ def test_batch_authorize_detailed_lookup_by_index(httpx_mock: HTTPXMock):
     # Test lookup by index
     assert len(response) == 2
     assert response[0].is_allowed()
-    assert response[0].policy_literal() is not None
+    policies = response[0].policies
+    assert len(policies) > 0
     assert response[0].version_hash() == "hash1"
 
     assert response[1].is_denied()
-    assert response[1].policy_literal() is None
+    assert len(response[1].policies) == 0
     assert response[1].version_hash() == "hash2"
 
 
@@ -587,12 +609,14 @@ def test_batch_authorize_detailed_lookup_by_id(httpx_mock: HTTPXMock):
                     "result": {
                         "decision": {
                             "Allow": {
-                                "policy": {
-                                    "literal": "permit (...);",
-                                    "json": {
-                                        "effect": "permit",
-                                    },
-                                },
+                                "policy": [
+                                    {
+                                        "literal": "permit (...);",
+                                        "json": {
+                                            "effect": "permit",
+                                        },
+                                    }
+                                ],
                                 "version": {
                                     "hash": "hash1",
                                     "loaded_at": "2025-12-19T00:14:38.577289000Z",
@@ -655,13 +679,14 @@ def test_batch_authorize_detailed_lookup_by_id(httpx_mock: HTTPXMock):
     photo_result = response.get_by_id("photo-allow")
     assert photo_result is not None
     assert photo_result.is_allowed()
-    assert photo_result.policy_literal() is not None
+    policies = photo_result.policies
+    assert len(policies) > 0
     assert photo_result.version_hash() == "hash1"
 
     video_result = response.get_by_id("video-deny")
     assert video_result is not None
     assert video_result.is_denied()
-    assert video_result.policy_literal() is None
+    assert len(video_result.policies) == 0
     assert video_result.version_hash() == "hash2"
 
 

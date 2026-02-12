@@ -1,13 +1,21 @@
+import re
 import subprocess
 import time
+from pathlib import Path
 
 import httpx
 import pytest
 
 from treetop_client.client import TreeTopClient
-from treetop_client.models import (Action, Decision, Request, Resource,
-                                   ResourceAttribute, ResourceAttributeType,
-                                   User)
+from treetop_client.models import (
+    Action,
+    Decision,
+    Request,
+    Resource,
+    ResourceAttribute,
+    ResourceAttributeType,
+    User,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -44,6 +52,75 @@ def make_request(
         resource=make_host_resource(host_id, ip),
         id=request_id,
     )
+
+
+def make_ip_request(
+    principal: str,
+    action: str,
+    ip: str,
+    groups: list[str] | None = None,
+    request_id: str | None = None,
+) -> Request:
+    """Create an authorization request for an IPAddress resource."""
+    return Request(
+        principal=User.new(principal, NAMESPACE, groups),
+        action=Action.new(action, NAMESPACE),
+        resource=Resource.new(
+            kind="IPAddress",
+            id=ip,
+            attrs={"ip": ResourceAttribute.new(ip, type=ResourceAttributeType.IP)},
+        ),
+        id=request_id,
+    )
+
+
+def make_label_request(
+    principal: str,
+    action: str,
+    label_id: str,
+    groups: list[str] | None = None,
+    request_id: str | None = None,
+) -> Request:
+    """Create an authorization request for a Label resource."""
+    return Request(
+        principal=User.new(principal, NAMESPACE, groups),
+        action=Action.new(action, NAMESPACE),
+        resource=Resource.new(
+            kind="Label",
+            id=label_id,
+            attrs={"name": ResourceAttribute.new(label_id)},
+        ),
+        id=request_id,
+    )
+
+
+def load_dns_policy_literals() -> dict[str, str]:
+    """Parse testdata/dns.cedar into a mapping of @id -> literal."""
+    cedar_path = Path(__file__).resolve().parent.parent / "testdata" / "dns.cedar"
+    lines = cedar_path.read_text(encoding="utf-8").splitlines()
+    policies: dict[str, str] = {}
+
+    current_id: str | None = None
+    current_lines: list[str] = []
+
+    for line in lines:
+        if current_id is None:
+            match = re.match(r'\s*@id\("([^"]+)"\)\s*$', line)
+            if match:
+                current_id = match.group(1)
+                current_lines = [line.rstrip()]
+            continue
+
+        current_lines.append(line.rstrip())
+        if line.strip().endswith(";"):
+            policies[current_id] = "\n".join(current_lines).strip()
+            current_id = None
+            current_lines = []
+
+    if current_id is not None:
+        raise AssertionError("Unterminated policy block in dns.cedar")
+
+    return policies
 
 
 @pytest.fixture
@@ -178,9 +255,11 @@ def test_live_check_allow_detailed(
     resp = client.check_detailed(req)
     assert resp.is_allowed()
     assert resp.decision == Decision.ALLOW
-    assert resp.policy is not None
+    assert len(resp.policies) > 0
+    policies = list(resp)
+    assert len(policies) > 0
     assert (
-        resp.policy_literal()
+        policies[0].literal
         == """@id("DNS.admins_policy")
 permit (
     principal in DNS::Group::"admins",
@@ -195,6 +274,177 @@ permit (
     # Verify version information is present
     assert resp.version_hash() is not None
     assert resp.version_loaded_at() is not None
+    
+    # Verify policy IDs are captured
+    annotation_ids = [p.annotation_id for p in policies if p.annotation_id is not None]
+    assert len(annotation_ids) > 0
+    assert annotation_ids[0] == "DNS.admins_policy"
+    
+    cedar_ids = [p.cedar_id for p in policies if p.cedar_id is not None]
+    assert len(cedar_ids) > 0
+    # Cedar ID should be present (e.g., "policy0", "policy1", etc.)
+    assert cedar_ids[0].startswith("policy")
+
+
+@pytest.mark.parametrize(
+    "req, expected_ids",
+    [
+        (
+            make_request("alice", "view_host", "host.example.com", ["admins"]),
+            {"DNS.admins_policy"},
+        ),
+        (
+            make_request(
+                "freddy",
+                "create_host",
+                "web-01.example.com",
+                ["webadmins"],
+                ip="192.168.1.4",
+            ),
+            {"DNS.webadmins_policy"},
+        ),
+        (
+            make_request("bob", "view_host", "host.example.com", ["users"]),
+            {"DNS.users_policy"},
+        ),
+        (
+            make_ip_request(
+                "alice",
+                "ip_network_management",
+                "10.0.0.1",
+                ["admins"],
+            ),
+            {"DNS.admins_ip_policy", "DNS.admins_ip_network_policy"},
+        ),
+        (
+            make_ip_request(
+                "bob",
+                "ip_network_management",
+                "192.168.1.42",
+                ["users"],
+            ),
+            {"DNS.users_ip_network_policy"},
+        ),
+        (
+            make_label_request(
+                "alice",
+                "create_label",
+                "dns-label",
+                ["admins"],
+            ),
+            {"DNS.labels_admin_policy"},
+        ),
+        (
+            Request(
+                principal=User.new("super"),
+                action=Action.new("any"),
+                resource=make_host_resource("super-host.example.com"),
+            ),
+            {"global.super_admin_allow_all_policy"},
+        ),
+    ],
+)
+def test_live_policies_match_dns_cedar(
+    req: Request,
+    expected_ids: set[str],
+    client: TreeTopClient,
+):
+    expected = load_dns_policy_literals()
+    resp = client.check_detailed(req)
+    assert resp.is_allowed()
+
+    policies = list(resp)
+    assert len(policies) == len(expected_ids)
+
+    policy_ids = {p.annotation_id for p in policies}
+    assert None not in policy_ids
+    assert {pid for pid in policy_ids if pid is not None} == expected_ids
+
+    for policy in policies:
+        assert policy.annotation_id is not None
+        assert policy.annotation_id in expected
+        assert policy.literal.strip() == expected[policy.annotation_id].strip()
+
+
+def test_live_forbid_policy_enforced(
+    client: TreeTopClient,
+):
+    expected = load_dns_policy_literals()
+    assert "DNS.charlie_forbid_delete_host_policy" in expected
+
+    # Charlie is an admin, but forbid policy should override the allow.
+    req = make_request("charlie", "delete_host", "host.example.com", ["admins"])
+    resp = client.check_detailed(req)
+    assert resp.is_denied()
+    assert len(resp) == 0
+
+
+def test_live_multiple_policy_ids_present(
+    client: TreeTopClient,
+):
+    expected = load_dns_policy_literals()
+    expected_ids = {"DNS.admins_ip_policy", "DNS.admins_ip_network_policy"}
+
+    req = make_ip_request(
+        "alice",
+        "ip_network_management",
+        "10.0.0.1",
+        ["admins"],
+    )
+    resp = client.check_detailed(req)
+    assert resp.is_allowed()
+
+    policies = list(resp)
+    assert len(policies) == 2
+
+    annotation_ids = {p.annotation_id for p in policies}
+    assert None not in annotation_ids
+    assert {pid for pid in annotation_ids if pid is not None} == expected_ids
+
+    cedar_ids = [p.cedar_id for p in policies if p.cedar_id is not None]
+    assert len(cedar_ids) == len(policies)
+    assert len(set(cedar_ids)) == len(cedar_ids)
+
+    for policy in policies:
+        assert policy.annotation_id is not None
+        assert policy.annotation_id in expected
+        assert policy.literal.strip() == expected[policy.annotation_id].strip()
+
+
+def test_live_users_ip_network_range(
+    client: TreeTopClient,
+):
+    allow_req_192 = make_ip_request(
+        "bob",
+        "ip_network_management",
+        "192.168.1.42",
+        ["users"],
+    )
+    allow_resp_192 = client.check_detailed(allow_req_192)
+    assert allow_resp_192.is_allowed()
+    assert len(allow_resp_192) == 1
+    assert allow_resp_192[0].annotation_id == "DNS.users_ip_network_policy"
+
+    allow_req_10 = make_ip_request(
+        "bob",
+        "ip_network_management",
+        "10.1.2.3",
+        ["users"],
+    )
+    allow_resp_10 = client.check_detailed(allow_req_10)
+    assert allow_resp_10.is_allowed()
+    assert len(allow_resp_10) == 1
+    assert allow_resp_10[0].annotation_id == "DNS.users_ip_network_policy"
+
+    deny_req = make_ip_request(
+        "bob",
+        "ip_network_management",
+        "172.16.0.1",
+        ["users"],
+    )
+    deny_resp = client.check_detailed(deny_req)
+    assert deny_resp.is_denied()
+    assert len(deny_resp) == 0
 
 
 # Batch authorization tests
@@ -274,16 +524,16 @@ def test_live_batch_authorize_detailed_multiple_requests(
     # Verify detailed results by index
     alice_result = response[0]
     assert alice_result.is_allowed()
-    alice_policy = alice_result.policy_literal()
-    assert alice_policy is not None
-    assert "admins_policy" in alice_policy
+    alice_policies = alice_result.policies
+    assert len(alice_policies) > 0
+    assert "admins_policy" in alice_policies[0].literal
     assert alice_result.version_hash() is not None
 
     bob_result = response[1]
     assert bob_result.is_allowed()
-    bob_policy = bob_result.policy_literal()
-    assert bob_policy is not None
-    assert "users_policy" in bob_policy
+    bob_policies = bob_result.policies
+    assert len(bob_policies) > 0
+    assert "users_policy" in bob_policies[0].literal
     assert bob_result.version_hash() is not None
 
 
@@ -307,14 +557,14 @@ def test_live_batch_authorize_detailed_lookup_by_id(
     super_result = response.get_by_id("super-admin-any")
     assert super_result is not None
     assert super_result.is_allowed()  # super can do anything
-    assert super_result.policy_literal() is not None
+    assert len(super_result.policies) > 0
     assert super_result.version_hash() is not None
     assert super_result.version_loaded_at() is not None
 
     bob_result = response.get_by_id("bob-create-detailed")
     assert bob_result is not None
     assert bob_result.is_denied()  # bob cannot create_host (user)
-    assert bob_result.policy_literal() is None  # Deny has no policy
+    assert len(bob_result.policies) == 0  # Deny has no policies
 
 
 def test_live_batch_authorize_iteration(

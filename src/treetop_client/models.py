@@ -243,10 +243,17 @@ class AuthorizedResponseBrief:
 class PermitPolicy:
     literal: str
     json: dict[str, Any]
+    annotation_id: str | None = None
+    cedar_id: str | None = None
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> PermitPolicy:
-        return cls(literal=data["literal"], json=data["json"])
+        return cls(
+            literal=data["literal"],
+            json=data["json"],
+            annotation_id=data.get("annotation_id"),
+            cedar_id=data.get("cedar_id"),
+        )
 
 
 @dataclass(slots=True, frozen=True)
@@ -264,9 +271,9 @@ class PolicyVersion:
 
 @dataclass(slots=True, frozen=True)
 class AuthorizedResponseDetailed:
-    # Either decision == Decision.DENY or Decision.ALLOW with PermitPolicy
+    # Either decision == Decision.DENY (empty policies list) or Decision.ALLOW with policies
     decision: Decision
-    policy: PermitPolicy | None
+    policies: list[PermitPolicy]
     version: PolicyVersion | None = None
 
     @classmethod
@@ -279,18 +286,26 @@ class AuthorizedResponseDetailed:
         if dec == Decision.DENY.value:
             version_blob = data.get("version")
             version = PolicyVersion.from_api(version_blob) if version_blob else None
-            return cls(decision=Decision.DENY, policy=None, version=version)
+            return cls(decision=Decision.DENY, policies=[], version=version)
 
         # 1b) Is it a simple Allow with top-level policy/version?
         if dec == Decision.ALLOW.value:
             if "policy" not in data:
                 raise ValueError(f"Allow decision missing policy: {data!r}")
             policy_blob = data["policy"]
+            # Handle case where server returns a list of policies
+            if isinstance(policy_blob, list):
+                if not policy_blob:
+                    raise ValueError(f"Allow decision has empty policy list: {data!r}")
+                policies = [PermitPolicy.from_api(p) for p in policy_blob]
+            else:
+                # Single policy (old format)
+                policies = [PermitPolicy.from_api(policy_blob)]
             version_blob = data.get("version")
             version = PolicyVersion.from_api(version_blob) if version_blob else None
             return cls(
                 decision=Decision.ALLOW,
-                policy=PermitPolicy.from_api(policy_blob),
+                policies=policies,
                 version=version,
             )
 
@@ -301,11 +316,11 @@ class AuthorizedResponseDetailed:
             version = PolicyVersion.from_api(version_blob) if version_blob else None
             return cls(
                 decision=Decision.DENY,
-                policy=None,
+                policies=[],
                 version=version,
             )
 
-        # 3) If it's a dict with an "Allow" key, pull the policy and optional version
+        # 3) If it's a dict with an "Allow" key, pull the policies and optional version
         if isinstance(dec, dict) and Decision.ALLOW.value in dec:
             if not isinstance(dec[Decision.ALLOW.value], dict):
                 raise ValueError(f"Malformed Allow decision: {dec!r}")
@@ -316,11 +331,19 @@ class AuthorizedResponseDetailed:
                 raise ValueError(f"Allow decision missing policy: {dec!r}")
 
             policy_blob = allow_dict["policy"]
+            # Handle case where server returns a list of policies
+            if isinstance(policy_blob, list):
+                if not policy_blob:
+                    raise ValueError(f"Allow decision has empty policy list: {dec!r}")
+                policies = [PermitPolicy.from_api(p) for p in policy_blob]
+            else:
+                # Single policy (old format)
+                policies = [PermitPolicy.from_api(policy_blob)]
             version_blob = allow_dict.get("version")
             version = PolicyVersion.from_api(version_blob) if version_blob else None
             return cls(
                 decision=Decision.ALLOW,
-                policy=PermitPolicy.from_api(policy_blob),
+                policies=policies,
                 version=version,
             )
 
@@ -333,13 +356,17 @@ class AuthorizedResponseDetailed:
     def is_denied(self) -> bool:
         return self.decision == Decision.DENY
 
-    def policy_literal(self) -> str | None:
-        """Return the policy literal if available, otherwise None."""
-        return self.policy.literal if self.policy else None
+    def __iter__(self):
+        """Iterate over matching policies."""
+        return iter(self.policies)
 
-    def policy_json(self) -> dict[str, Any] | None:
-        """Return the policy JSON if available, otherwise None."""
-        return self.policy.json if self.policy else None
+    def __len__(self) -> int:
+        """Return the number of matching policies."""
+        return len(self.policies)
+
+    def __getitem__(self, index: int) -> PermitPolicy:
+        """Return a matching policy by index."""
+        return self.policies[index]
 
     def version_hash(self) -> str | None:
         """Return the policy version hash if available, otherwise None."""
@@ -377,15 +404,15 @@ class AuthorizeResultBase(Generic[ResultT]):
 
     def get_decision(self) -> Decision | None:
         """Get the decision if successful, otherwise None."""
-        return self.result.decision if self.result else None
+        return self.result.decision if self.result is not None else None
 
     def is_allowed(self) -> bool:
         """Check if the decision is Allow."""
-        return self.result.is_allowed() if self.result else False
+        return self.result.is_allowed() if self.result is not None else False
 
     def is_denied(self) -> bool:
         """Check if the decision is Deny."""
-        return self.result.is_denied() if self.result else False
+        return self.result.is_denied() if self.result is not None else False
 
 
 @dataclass(slots=True, frozen=True)
@@ -423,21 +450,30 @@ class AuthorizeResultDetailed(AuthorizeResultBase[AuthorizedResponseDetailed]):
 
         return cls(index=index, id=result_id, status=status, result=result, error=error)
 
-    def policy_literal(self) -> str | None:
-        """Return the policy literal if available, otherwise None."""
-        return self.result.policy_literal() if self.result else None
+    @property
+    def policies(self) -> list[PermitPolicy]:
+        """Return matching policies. Empty list for failed or Deny results."""
+        return self.result.policies if self.result is not None else []
 
-    def policy_json(self) -> dict[str, Any] | None:
-        """Return the policy JSON if available, otherwise None."""
-        return self.result.policy_json() if self.result else None
+    def __iter__(self):
+        """Iterate over matching policies."""
+        return iter(self.policies)
+
+    def __len__(self) -> int:
+        """Return the number of matching policies."""
+        return len(self.policies)
+
+    def __getitem__(self, index: int) -> PermitPolicy:
+        """Return a matching policy by index."""
+        return self.policies[index]
 
     def version_hash(self) -> str | None:
         """Return the policy version hash if available, otherwise None."""
-        return self.result.version_hash() if self.result else None
+        return self.result.version_hash() if self.result is not None else None
 
     def version_loaded_at(self) -> datetime | None:
         """Return the policy version loaded_at timestamp if available, otherwise None."""
-        return self.result.version_loaded_at() if self.result else None
+        return self.result.version_loaded_at() if self.result is not None else None
 
 
 # Generic type variables for authorization results and responses

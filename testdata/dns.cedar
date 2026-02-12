@@ -78,8 +78,8 @@ permit (
 )
 when
 {
-    resource.ip.isInRange("192.168.1.0/24") ||
-    resource.ip.isInRange("10.0.0.0/8")
+    resource.ip.isInRange(ip("192.168.1.0/24")) ||
+    resource.ip.isInRange(ip("10.0.0.0/8"))
 };
 
 /// Admins can do whatever with labels.
