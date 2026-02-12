@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Sequence
-from typing import Any, Final
+from typing import Final, cast, override
 
 import httpx
 
-from treetop_client.models import (AuthorizedResponseBrief,
-                                   AuthorizedResponseDetailed,
-                                   AuthorizeResponseBrief,
-                                   AuthorizeResponseDetailed, Decision,
-                                   Endpoint, Request, as_api)
+from treetop_client.models import (
+    AuthorizedResponseBrief,
+    AuthorizedResponseDetailed,
+    AuthorizeResponseBrief,
+    AuthorizeResponseDetailed,
+    Decision,
+    Endpoint,
+    JsonArray,
+    JsonObject,
+    JsonValue,
+    Request,
+    as_api,
+)
 
 _DEFAULT_LIMITS: Final = httpx.Limits(
     max_connections=100,
@@ -21,11 +29,18 @@ _DEFAULT_LIMITS: Final = httpx.Limits(
 class _Singleton(type):
     _instance: TreeTopClient | None = None
 
-    def __call__(cls, *args, **kwargs):  # type: ignore[override]
+    @override
+    def __call__(cls, *args: object, **kwargs: object) -> TreeTopClient:
         """Ensure that only one instance of TreeTopClient exists."""
-        if cls._instance is None:
-            cls._instance = super().__call__(*args, **kwargs)
-        return cls._instance
+        instance: TreeTopClient | None = cls._instance
+        if instance is None:
+            instance = cast(TreeTopClient, super().__call__(*args, **kwargs))
+            cls._instance = instance
+        return instance
+
+    def clear_instance(cls) -> None:
+        """Reset the cached singleton instance."""
+        cls._instance = None
 
 
 class TreeTopClient(metaclass=_Singleton):
@@ -37,13 +52,13 @@ class TreeTopClient(metaclass=_Singleton):
         timeout: float | httpx.Timeout = 5.0,
         verify: bool | str = True,
     ):
-        self._sync_client = httpx.Client(
+        self._sync_client: httpx.Client = httpx.Client(
             base_url=base_url,
             limits=limits or _DEFAULT_LIMITS,
             timeout=timeout,
             verify=verify,
         )
-        self._async_client = httpx.AsyncClient(
+        self._async_client: httpx.AsyncClient = httpx.AsyncClient(
             base_url=base_url,
             limits=limits or _DEFAULT_LIMITS,
             timeout=timeout,
@@ -59,7 +74,7 @@ class TreeTopClient(metaclass=_Singleton):
     def _sync_post(
         self,
         url: str,
-        json_body: dict[str, Any],
+        json_body: JsonObject,
         correlation_id: str | None = None,
         params: dict[str, str] | None = None,
     ) -> httpx.Response:
@@ -74,7 +89,7 @@ class TreeTopClient(metaclass=_Singleton):
     async def _async_post(
         self,
         url: str,
-        json_body: dict[str, Any],
+        json_body: JsonObject,
         correlation_id: str | None = None,
         params: dict[str, str] | None = None,
     ) -> httpx.Response:
@@ -88,7 +103,7 @@ class TreeTopClient(metaclass=_Singleton):
 
     def authorize(
         self,
-        requests: Request | dict[str, Any] | Sequence[Request | dict[str, Any]],
+        requests: Request | JsonObject | Sequence[Request | JsonObject],
         correlation_id: str | None = None,
     ) -> AuthorizeResponseBrief:
         """Authorize one or more requests (brief detail level). Synchronous version.
@@ -101,22 +116,23 @@ class TreeTopClient(metaclass=_Singleton):
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
-        request_list: list[dict[str, Any]] = []
+        request_list: JsonArray
         if isinstance(requests, (Request, dict)):
-            request_list = [as_api(requests)]
+            request_list = [cast(JsonValue, as_api(requests))]
         else:
-            request_list = [as_api(req) for req in requests]
+            request_list = [cast(JsonValue, as_api(req)) for req in requests]
         resp = self._sync_post(
             Endpoint.AUTHORIZE.value,
             json_body={"requests": request_list},
             correlation_id=correlation_id,
         )
-        resp.raise_for_status()
-        return AuthorizeResponseBrief.from_api(resp.json())
+        return AuthorizeResponseBrief.from_api(
+            cast(JsonObject, resp.raise_for_status().json())
+        )
 
     def authorize_detailed(
         self,
-        requests: Request | dict[str, Any] | Sequence[Request | dict[str, Any]],
+        requests: Request | JsonObject | Sequence[Request | JsonObject],
         correlation_id: str | None = None,
     ) -> AuthorizeResponseDetailed:
         """Authorize one or more requests (detailed with policy info). Synchronous version.
@@ -129,23 +145,24 @@ class TreeTopClient(metaclass=_Singleton):
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
-        request_list: list[dict[str, Any]] = []
+        request_list: JsonArray
         if isinstance(requests, (Request, dict)):
-            request_list = [as_api(requests)]
+            request_list = [cast(JsonValue, as_api(requests))]
         else:
-            request_list = [as_api(req) for req in requests]
+            request_list = [cast(JsonValue, as_api(req)) for req in requests]
         resp = self._sync_post(
             Endpoint.AUTHORIZE.value,
             json_body={"requests": request_list},
             correlation_id=correlation_id,
             params={"detail": "full"},
         )
-        resp.raise_for_status()
-        return AuthorizeResponseDetailed.from_api(resp.json())
+        return AuthorizeResponseDetailed.from_api(
+            cast(JsonObject, resp.raise_for_status().json())
+        )
 
     async def aauthorize(
         self,
-        requests: Request | dict[str, Any] | Sequence[Request | dict[str, Any]],
+        requests: Request | JsonObject | Sequence[Request | JsonObject],
         correlation_id: str | None = None,
     ) -> AuthorizeResponseBrief:
         """Authorize one or more requests (brief detail level). Asynchronous version.
@@ -158,22 +175,23 @@ class TreeTopClient(metaclass=_Singleton):
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
-        request_list: list[dict[str, Any]] = []
+        request_list: JsonArray
         if isinstance(requests, (Request, dict)):
-            request_list = [as_api(requests)]
+            request_list = [cast(JsonValue, as_api(requests))]
         else:
-            request_list = [as_api(req) for req in requests]
+            request_list = [cast(JsonValue, as_api(req)) for req in requests]
         resp = await self._async_post(
             Endpoint.AUTHORIZE.value,
             json_body={"requests": request_list},
             correlation_id=correlation_id,
         )
-        resp.raise_for_status()
-        return AuthorizeResponseBrief.from_api(resp.json())
+        return AuthorizeResponseBrief.from_api(
+            cast(JsonObject, resp.raise_for_status().json())
+        )
 
     async def aauthorize_detailed(
         self,
-        requests: Request | dict[str, Any] | Sequence[Request | dict[str, Any]],
+        requests: Request | JsonObject | Sequence[Request | JsonObject],
         correlation_id: str | None = None,
     ) -> AuthorizeResponseDetailed:
         """Authorize one or more requests (detailed with policy info). Asynchronous version.
@@ -186,23 +204,24 @@ class TreeTopClient(metaclass=_Singleton):
         Raises:
             httpx.HTTPStatusError: If the request fails with a non-2xx status code
         """
-        request_list: list[dict[str, Any]] = []
+        request_list: JsonArray
         if isinstance(requests, (Request, dict)):
-            request_list = [as_api(requests)]
+            request_list = [cast(JsonValue, as_api(requests))]
         else:
-            request_list = [as_api(req) for req in requests]
+            request_list = [cast(JsonValue, as_api(req)) for req in requests]
         resp = await self._async_post(
             Endpoint.AUTHORIZE.value,
             json_body={"requests": request_list},
             correlation_id=correlation_id,
             params={"detail": "full"},
         )
-        resp.raise_for_status()
-        return AuthorizeResponseDetailed.from_api(resp.json())
+        return AuthorizeResponseDetailed.from_api(
+            cast(JsonObject, resp.raise_for_status().json())
+        )
 
     # Compatibility methods for single-request API (wraps batch API)
     def check(
-        self, request: Request | dict[str, Any], correlation_id: str | None = None
+        self, request: Request | JsonObject, correlation_id: str | None = None
     ) -> AuthorizedResponseBrief:
         """Check the given request. Synchronous version (compatibility wrapper).
 
@@ -226,7 +245,7 @@ class TreeTopClient(metaclass=_Singleton):
         return result.result or AuthorizedResponseBrief(Decision.DENY)
 
     def check_detailed(
-        self, request: Request | dict[str, Any], correlation_id: str | None = None
+        self, request: Request | JsonObject, correlation_id: str | None = None
     ) -> AuthorizedResponseDetailed:
         """Check the given request with detailed output. Synchronous version (compatibility wrapper).
 
@@ -250,7 +269,7 @@ class TreeTopClient(metaclass=_Singleton):
         return result.result or AuthorizedResponseDetailed(Decision.DENY, [], None)
 
     async def acheck(
-        self, request: Request | dict[str, Any], correlation_id: str | None = None
+        self, request: Request | JsonObject, correlation_id: str | None = None
     ) -> AuthorizedResponseBrief:
         """Check the given request. Asynchronous version (compatibility wrapper).
 
@@ -274,7 +293,7 @@ class TreeTopClient(metaclass=_Singleton):
         return result.result or AuthorizedResponseBrief(Decision.DENY)
 
     async def acheck_detailed(
-        self, request: Request | dict[str, Any], correlation_id: str | None = None
+        self, request: Request | JsonObject, correlation_id: str | None = None
     ) -> AuthorizedResponseDetailed:
         """Check the given request with detailed output. Asynchronous version (compatibility wrapper).
 
@@ -303,14 +322,14 @@ class TreeTopClient(metaclass=_Singleton):
         """Close the synchronous client connection."""
         with contextlib.suppress(Exception):
             self._sync_client.close()
-        TreeTopClient._instance = None  # type: ignore
+        type(self).clear_instance()
 
     async def aclose(self):
         """Close the asynchronous client connection."""
         await self._async_client.aclose()
         self._sync_client.close()
-        TreeTopClient._instance = None  # type: ignore
+        type(self).clear_instance()
 
 
 # For typing convenience
-RequestLike = Request | dict[str, Any]
+RequestLike = Request | JsonObject

@@ -1,8 +1,11 @@
+from typing import cast
+
 import pytest
 
 from treetop_client.models import (
     Action,
     Group,
+    JsonObject,
     QualifiedId,
     Request,
     Resource,
@@ -25,9 +28,11 @@ def test_qualified_id_and_group():
         ),
     )
     api = req.to_api()
-    assert api["principal"]["User"]["id"] == "alice"
-    assert api["principal"]["User"]["namespace"] == ["App"]
-    assert api["principal"]["User"] == {
+    principal = cast(JsonObject, api["principal"])
+    user = cast(JsonObject, principal["User"])
+    assert user["id"] == "alice"
+    assert cast(list[str], user["namespace"]) == ["App"]
+    assert user == {
         "id": "alice",
         "namespace": ["App"],
         "groups": [{"id": "alice", "namespace": ["App"]}],
@@ -36,22 +41,22 @@ def test_qualified_id_and_group():
 
 def test_resource_empty_attrs():
     with pytest.raises(ValueError):
-        Resource(kind="Photo", id="1", attrs={})
+        _ = Resource(kind="Photo", id="1", attrs={})
 
 
 def test_user_no_colon():
     with pytest.raises(ValueError):
-        User(id=QualifiedId(id="bad:user"))
+        _ = User(id=QualifiedId(id="bad:user"))
 
 
 def test_group_no_colon():
     with pytest.raises(ValueError):
-        Group(id=QualifiedId(id="bad:group", namespace=["App"]))
+        _ = Group(id=QualifiedId(id="bad:group", namespace=["App"]))
 
 
 def test_action_no_colon():
     with pytest.raises(ValueError):
-        Action(id=QualifiedId(id="bad:action"))
+        _ = Action(id=QualifiedId(id="bad:action"))
 
 
 def test_user_with_namespace():

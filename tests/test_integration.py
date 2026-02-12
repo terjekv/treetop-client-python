@@ -2,6 +2,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -124,8 +125,9 @@ def load_dns_policy_literals() -> dict[str, str]:
 
 
 @pytest.fixture
-def client(docker_compose_up_down) -> TreeTopClient: # type: ignore[reportMissingParameterType]
+def client(docker_compose_up_down: object) -> TreeTopClient:
     """Create a TreeTopClient connected to the test server."""
+    _ = docker_compose_up_down
     return TreeTopClient(base_url=f"http://localhost:{PORT}")
 
 
@@ -136,7 +138,8 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
     tear it down afterwards.
     """
     # bring up
-    subprocess.check_call(
+    _ = tmp_path_factory
+    _ = subprocess.check_call(
         ["docker", "compose", "-f", "docker-compose.integration.yml", "up", "-d"]
     )
     # wait for the server to be ready
@@ -144,7 +147,13 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
         try:
             resp = httpx.get(f"http://localhost:{PORT}/api/v1/policies", timeout=1.0)
             if resp.status_code == 200:
-                entries = resp.json().get("policies", {}).get("entries", 0)
+                payload = cast(dict[str, object], resp.json())
+                policies = payload.get("policies")
+                entries = 0
+                if isinstance(policies, dict):
+                    policies_dict = cast(dict[str, object], policies)
+                    entries_val = policies_dict.get("entries", 0)
+                    entries = entries_val if isinstance(entries_val, int) else 0
                 if entries:
                     break
                 else:
@@ -155,7 +164,7 @@ def docker_compose_up_down(tmp_path_factory: pytest.TempPathFactory):
         pytest.skip("policy-server did not start in time")
     yield
     # tear down
-    subprocess.call(
+    _ = subprocess.call(
         ["docker", "compose", "-f", "docker-compose.integration.yml", "down"]
     )
 

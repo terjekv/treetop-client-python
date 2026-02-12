@@ -240,7 +240,7 @@ def test_authorize_error(httpx_mock: HTTPXMock):
     )
     client = TreeTopClient()
     with pytest.raises(httpx.HTTPStatusError):
-        client.authorize(make_req())
+        _ = client.authorize(make_req())
 
 
 def test_async_authorize(httpx_mock: HTTPXMock):
